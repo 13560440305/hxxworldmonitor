@@ -166,11 +166,11 @@ export class NewsPanel extends Panel {
         this.setCachedSummary(cacheKey, result.summary);
         this.showSummary(result.summary);
       } else {
-        this.summaryContainer.innerHTML = '<div class="panel-summary-error">Could not generate summary</div>';
+        this.summaryContainer.innerHTML = `<div class="panel-summary-error">${t('components.newsPanel.couldNotGenerateSummary')}</div>`;
         setTimeout(() => this.hideSummary(), 3000);
       }
     } catch {
-      this.summaryContainer.innerHTML = '<div class="panel-summary-error">Summary failed</div>';
+      this.summaryContainer.innerHTML = `<div class="panel-summary-error">${t('components.newsPanel.summaryFailed')}</div>`;
       setTimeout(() => this.hideSummary(), 3000);
     } finally {
       this.isSummarizing = false;
@@ -198,7 +198,7 @@ export class NewsPanel extends Panel {
         titleEl.textContent = translated;
         titleEl.dataset.original = originalText;
         element.innerHTML = '✓';
-        element.title = 'Original: ' + originalText;
+        element.title = t('components.newsPanel.originalTitle', { text: originalText });
         element.classList.add('translated');
       } else {
         element.innerHTML = '文';

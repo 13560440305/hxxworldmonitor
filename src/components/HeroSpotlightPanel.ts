@@ -1,6 +1,7 @@
 import { Panel } from './Panel';
 import type { NewsItem } from '@/types';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
+import { t } from '@/services/i18n';
 
 /**
  * HeroSpotlightPanel -- Daily hero spotlight card with photo, excerpt, and map location.
@@ -17,9 +18,9 @@ export class HeroSpotlightPanel extends Panel {
   public onLocationRequest?: (lat: number, lon: number) => void;
 
   constructor() {
-    super({ id: 'spotlight', title: "Today's Hero", trackActivity: false });
+    super({ id: 'spotlight', title: t('panels.spotlight'), trackActivity: false });
     this.content.innerHTML =
-      '<div class="hero-card-loading">Loading today\'s hero...</div>';
+      `<div class="hero-card-loading">${t('happy.hero.loading')}</div>`;
   }
 
   /**
@@ -28,7 +29,7 @@ export class HeroSpotlightPanel extends Panel {
   public setHeroStory(item: NewsItem | undefined): void {
     if (!item) {
       this.content.innerHTML =
-        '<div class="hero-card-empty">No hero story available today</div>';
+        `<div class="hero-card-empty">${t('happy.hero.empty')}</div>`;
       return;
     }
 
@@ -47,7 +48,7 @@ export class HeroSpotlightPanel extends Panel {
     // Location button -- only when BOTH lat and lon are defined
     const hasLocation = item.lat !== undefined && item.lon !== undefined;
     const locationHtml = hasLocation
-      ? `<button class="hero-card-location-btn" data-lat="${item.lat}" data-lon="${item.lon}" type="button">Show on map</button>`
+      ? `<button class="hero-card-location-btn" data-lat="${item.lat}" data-lon="${item.lon}" type="button">${t('happy.hero.showOnMap')}</button>`
       : '';
 
     this.content.innerHTML = `<div class="hero-card">

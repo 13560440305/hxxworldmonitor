@@ -5,6 +5,7 @@ import {
   formatCounterValue,
   type CounterMetric,
 } from '@/services/humanity-counters';
+import { t } from '@/services/i18n';
 
 /**
  * CountersPanel -- Worldometer-style ticking counters showing positive global metrics.
@@ -21,7 +22,7 @@ export class CountersPanel extends Panel {
   private valueElements: Map<string, HTMLElement> = new Map();
 
   constructor() {
-    super({ id: 'counters', title: 'Live Counters', trackActivity: false });
+    super({ id: 'counters', title: t('panels.counters'), trackActivity: false });
     this.createCounterGrid();
     this.startTicking();
   }
@@ -65,11 +66,11 @@ export class CountersPanel extends Panel {
 
     const label = document.createElement('div');
     label.className = 'counter-label';
-    label.textContent = metric.label;
+    label.textContent = t(`happy.counters.${metric.id}.label`);
 
     const source = document.createElement('div');
     source.className = 'counter-source';
-    source.textContent = metric.source;
+    source.textContent = t(`happy.counters.${metric.id}.source`);
 
     card.appendChild(icon);
     card.appendChild(value);

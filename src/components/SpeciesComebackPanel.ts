@@ -12,6 +12,7 @@ import * as d3 from 'd3';
 import type { SpeciesRecovery } from '@/services/conservation-data';
 import { getCSSColor } from '@/utils';
 import { replaceChildren } from '@/utils/dom-utils';
+import { t } from '@/services/i18n';
 
 const SPARKLINE_MARGIN = { top: 4, right: 8, bottom: 16, left: 8 };
 const SPARKLINE_HEIGHT = 50;
@@ -28,7 +29,7 @@ const FALLBACK_IMAGE_SVG = 'data:image/svg+xml,' + encodeURIComponent(
 
 export class SpeciesComebackPanel extends Panel {
   constructor() {
-    super({ id: 'species', title: 'Conservation Wins', trackActivity: false });
+    super({ id: 'species', title: t('panels.species'), trackActivity: false });
   }
 
   /**
@@ -42,7 +43,7 @@ export class SpeciesComebackPanel extends Panel {
     if (species.length === 0) {
       const empty = document.createElement('div');
       empty.className = 'species-empty';
-      empty.textContent = 'No conservation data available';
+      empty.textContent = t('happy.species.empty');
       this.content.appendChild(empty);
       return;
     }
@@ -134,7 +135,7 @@ export class SpeciesComebackPanel extends Panel {
 
     const recoveryBadge = document.createElement('span');
     recoveryBadge.className = `species-badge badge-${entry.recoveryStatus}`;
-    recoveryBadge.textContent = entry.recoveryStatus.charAt(0).toUpperCase() + entry.recoveryStatus.slice(1);
+    recoveryBadge.textContent = t(`happy.species.${entry.recoveryStatus}`);
     badgesDiv.appendChild(recoveryBadge);
 
     const iucnBadge = document.createElement('span');

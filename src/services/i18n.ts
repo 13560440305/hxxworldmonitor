@@ -129,6 +129,12 @@ export function getLocale(): string {
   return map[lang] || lang;
 }
 
+/** Languages shown in the header dropdown (subset of supported locales). */
+export const HEADER_LANGUAGES = [
+  { code: 'en', label: 'English' },
+  { code: 'zh', label: '简体中文' },
+] as const;
+
 export const LANGUAGES = [
   { code: 'en', label: 'English', flag: '🇬🇧' },
   { code: 'ar', label: 'العربية', flag: '🇸🇦' },

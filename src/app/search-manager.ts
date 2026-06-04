@@ -56,8 +56,8 @@ export class SearchManager implements AppModule {
       }
       : SITE_VARIANT === 'happy'
         ? {
-          placeholder: 'Search or type a command...',
-          hint: 'Good News • Countries • Navigation • Settings',
+          placeholder: t('modals.search.placeholder'),
+          hint: t('modals.search.hintHappy'),
         }
         : SITE_VARIANT === 'finance'
           ? {

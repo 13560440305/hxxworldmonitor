@@ -142,7 +142,15 @@
     "panelCatCentralBanks": "央行与经济",
     "panelCatDeals": "交易与机构",
     "panelCatGulfMena": "海湾与中东",
-    "panelCatTradePolicy": "贸易政策"
+    "panelCatTradePolicy": "贸易政策",
+    "logo": "MONITOR",
+    "beta": "测试版",
+    "goodNews": "好消息",
+    "tvMode": "电视模式 (Shift+T)",
+    "exitTvMode": "退出电视模式",
+    "exitFullscreen": "退出全屏",
+    "viewRegion": "查看区域",
+    "strikeCapable": "具备打击能力"
   },
   "panels": {
     "liveNews": "实时新闻",
@@ -216,7 +224,17 @@
     "gulfEconomies": "海湾经济",
     "gulfIndices": "海湾指数",
     "gulfCurrencies": "海湾货币",
-    "gulfOil": "海湾石油"
+    "gulfOil": "海湾石油",
+    "goodNewsMap": "好消息地图",
+    "positiveFeed": "好消息动态",
+    "spotlight": "今日英雄",
+    "digest": "5件好事",
+    "breakthroughs": "科学突破",
+    "counters": "实时计数",
+    "progress": "人类进步",
+    "renewable": "可再生能源",
+    "species": "保护成果",
+    "worldClock": "世界时钟"
   },
   "modals": {
     "search": {
@@ -253,7 +271,8 @@
         "techevent": "科技活动",
         "techhq": "科技总部",
         "accelerator": "加速器"
-      }
+      },
+      "hintHappy": "好消息 • 国家 • 导航 • 设置"
     },
     "signal": {
       "title": "情报发现",
@@ -516,7 +535,14 @@
         "americas": "美洲",
         "asia": "亚洲"
       },
-      "expand": "展开"
+      "expand": "展开",
+      "fullscreen": "全屏",
+      "exitFullscreen": "退出全屏",
+      "gridView": "网格视图",
+      "singleView": "单路视图",
+      "grid": "网格",
+      "paused": "摄像头已暂停",
+      "pausedResume": "摄像头已暂停 — 移动鼠标恢复"
     },
     "monitor": {
       "placeholder": "关键词（逗号分隔）",
@@ -1072,7 +1098,8 @@
       "onMap": "{{count}} on map",
       "techmemeEvents": "Techmeme Events ↗",
       "today": "TODAY",
-      "soon": "SOON"
+      "soon": "SOON",
+      "deductWithAi": "AI 态势推演"
     },
     "techReadiness": {
       "internetUsers": "互联网用户",
@@ -1158,7 +1185,10 @@
       "summarize": "总结此面板",
       "generatingSummary": "正在生成摘要...",
       "sources": "{{count}}个来源",
-      "relatedAssetsNear": "{{location}}附近的相关资产"
+      "relatedAssetsNear": "{{location}}附近的相关资产",
+      "couldNotGenerateSummary": "无法生成摘要",
+      "summaryFailed": "摘要失败",
+      "originalTitle": "原文：{{text}}"
     },
     "export": {
       "exportData": "导出数据"
@@ -1380,7 +1410,12 @@
       "channelNotFound": "未找到YouTube频道",
       "invalidHandle": "请输入有效的YouTube用户名（例如 @ChannelName）",
       "signInToYouTube": "登录YouTube",
-      "verifying": "验证中…"
+      "verifying": "验证中…",
+      "togglePlayback": "切换播放",
+      "toggleSound": "切换声音",
+      "fullscreen": "全屏",
+      "exitFullscreen": "退出全屏",
+      "loadPlayer": "加载播放器"
     },
     "securityAdvisories": {
       "loading": "正在加载旅行警告...",
@@ -1466,6 +1501,22 @@
       "topProducers": "主要生产国",
       "upstreamUnavailable": "供应链数据暂时不可用 — 显示缓存数据",
       "warnings": "条警告"
+    },
+    "map": {
+      "showMap": "显示地图",
+      "hideMap": "隐藏地图",
+      "aisSignalLost": "AIS 信号丢失"
+    },
+    "deduction": {
+      "title": "态势推演",
+      "infoTooltip": "使用 AI 情报推演假设或当前事件的时间线与影响。",
+      "queryPlaceholder": "例如：未来 24 小时中东可能发生什么？",
+      "geoPlaceholder": "可选的地理或局势背景…",
+      "analyze": "分析",
+      "analyzing": "正在分析时间线与影响…",
+      "noAnalysis": "该查询暂无分析结果。",
+      "error": "分析局势时发生错误。",
+      "generatedBy": "由 {{provider}}{{model}} 生成"
     }
   },
   "popups": {
@@ -2118,5 +2169,117 @@
     "all": "全部",
     "loadingGiving": "正在加载全球捐赠数据",
     "rateLimitedMarket": "市场数据暂时不可用（请求受限）— 即将自动重试"
+  },
+  "happy": {
+    "categories": {
+      "science-health": "科学与健康",
+      "nature-wildlife": "自然与野生动物",
+      "humanity-kindness": "人性与善举",
+      "innovation-tech": "创新与技术",
+      "climate-wins": "气候成就",
+      "culture-community": "文化与社区"
+    },
+    "positiveFeed": {
+      "empty": "该分类暂无故事"
+    },
+    "hero": {
+      "loading": "正在加载今日英雄…",
+      "empty": "今日暂无英雄故事",
+      "showOnMap": "在地图上显示"
+    },
+    "digest": {
+      "loading": "正在加载今日摘要…",
+      "empty": "暂无故事",
+      "summarizing": "正在摘要…"
+    },
+    "breakthroughs": {
+      "empty": "暂无科学突破"
+    },
+    "progress": {
+      "empty": "暂无进步数据",
+      "lifeExpectancy": "预期寿命",
+      "literacy": "识字率",
+      "childMortality": "儿童死亡率",
+      "extremePoverty": "极端贫困",
+      "unitYears": "年",
+      "unitPercent": "%",
+      "unitPerThousand": "每千人"
+    },
+    "counters": {
+      "births": {
+        "label": "今日出生婴儿",
+        "source": "联合国人口司"
+      },
+      "trees": {
+        "label": "今日种植树木",
+        "source": "全球森林观察 / 粮农组织"
+      },
+      "vaccines": {
+        "label": "今日接种疫苗",
+        "source": "世卫组织 / 联合国儿童基金会"
+      },
+      "graduates": {
+        "label": "今日毕业学生",
+        "source": "联合国教科文组织统计研究所"
+      },
+      "books": {
+        "label": "今日出版书籍",
+        "source": "联合国教科文组织 / Bowker"
+      },
+      "renewable": {
+        "label": "今日新增可再生装机",
+        "source": "国际可再生能源署 / 国际能源署"
+      }
+    },
+    "renewable": {
+      "empty": "暂无可再生能源数据",
+      "gaugeLabel": "可再生",
+      "dataFrom": "{{year}}年数据",
+      "usCapacity": "美国装机容量 (EIA)",
+      "solar": "太阳能",
+      "wind": "风能",
+      "coal": "煤炭"
+    },
+    "species": {
+      "empty": "暂无保护数据",
+      "recovered": "已恢复",
+      "recovering": "恢复中",
+      "stabilized": "已稳定"
+    },
+    "worldClock": {
+      "selectCities": "选择城市",
+      "done": "完成",
+      "noCities": "未选择城市。点击 ⚙ 添加城市。",
+      "dragToReorder": "拖动排序",
+      "marketOpen": "开市",
+      "marketClosed": "休市",
+      "regions": {
+        "americas": "美洲",
+        "europe": "欧洲",
+        "middleEastAfrica": "中东与非洲",
+        "asiaPacific": "亚太"
+      }
+    }
+  },
+  "layout": {
+    "nav": {
+      "dashboards": "仪表盘",
+      "geopolitics": "地缘政治",
+      "infrastructure": "基础设施",
+      "naturalEvents": "自然事件",
+      "intelligence": "情报",
+      "markets": "市场",
+      "regional": "地区新闻",
+      "core": "核心"
+    },
+    "viewGlobe": "全球视图",
+    "viewTimeline": "时间线",
+    "viewHeatmap": "热力图",
+    "viewCountryIntel": "国家情报",
+    "contextPanel": "实时上下文",
+    "contextSubtitle": "实时数据流",
+    "sidebarLabel": "导航",
+    "proTitle": "World Monitor Pro",
+    "proSubtitle": "AI 分析 + MCP"
   }
 }

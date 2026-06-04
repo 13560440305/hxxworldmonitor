@@ -49,7 +49,9 @@ import { GoodThingsDigestPanel } from '@/components/GoodThingsDigestPanel';
 import { SpeciesComebackPanel } from '@/components/SpeciesComebackPanel';
 import { RenewableEnergyPanel } from '@/components/RenewableEnergyPanel';
 import { GivingPanel } from '@/components';
+import { SidebarNav } from '@/components/SidebarNav';
 import { focusInvestmentOnMap } from '@/services/investments-focus';
+import { getViewTabPanel } from '@/config/layout-nav';
 import { debounce, saveToStorage } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
 import {
@@ -60,7 +62,7 @@ import {
   SITE_VARIANT,
 } from '@/config';
 import { BETA_MODE } from '@/config/beta';
-import { t } from '@/services/i18n';
+import { t, getCurrentLanguage, HEADER_LANGUAGES } from '@/services/i18n';
 import { getCurrentTheme } from '@/utils';
 import { trackCriticalBannerAction } from '@/services/analytics';
 
@@ -76,6 +78,8 @@ export class PanelLayoutManager implements AppModule {
   private callbacks: PanelLayoutCallbacks;
   private panelDragCleanupHandlers: Array<() => void> = [];
   private criticalBannerEl: HTMLElement | null = null;
+  private sidebarNav: SidebarNav | null = null;
+  private activeContextPanel: string | null = null;
   private readonly applyTimeRangeFilterDebounced: () => void;
 
   constructor(ctx: AppContext, callbacks: PanelLayoutCallbacks) {
@@ -87,10 +91,12 @@ export class PanelLayoutManager implements AppModule {
   }
 
   init(): void {
+    document.body.classList.add('wm-layout');
     this.renderLayout();
   }
 
   destroy(): void {
+    document.body.classList.remove('wm-layout');
     this.panelDragCleanupHandlers.forEach((cleanup) => cleanup());
     this.panelDragCleanupHandlers = [];
     if (this.criticalBannerEl) {
@@ -107,115 +113,183 @@ export class PanelLayoutManager implements AppModule {
     this.ctx.digestPanel?.destroy();
     this.ctx.speciesPanel?.destroy();
     this.ctx.renewablePanel?.destroy();
+    this.sidebarNav = null;
+  }
+
+  /** Show a single panel in the right context column. */
+  activateContextPanel(panelKey: string): void {
+    const panel = this.ctx.panels[panelKey];
+    if (!panel) return;
+
+    this.activeContextPanel = panelKey;
+    document.querySelectorAll('#panelsGrid .panel').forEach((el) => {
+      el.classList.toggle('context-active', (el as HTMLElement).dataset.panel === panelKey);
+    });
+    this.sidebarNav?.setActivePanel(panelKey);
+    this.updateContextHeader(panelKey);
+    try {
+      localStorage.setItem('wm-active-context-panel', panelKey);
+    } catch { /* ignore */ }
+  }
+
+  private updateContextHeader(panelKey: string): void {
+    const cfg = this.ctx.panelSettings[panelKey];
+    const titleEl = document.getElementById('contextPanelTitle');
+    const subtitleEl = document.getElementById('contextPanelSubtitle');
+    if (titleEl && cfg) {
+      titleEl.textContent = this.getLocalizedPanelName(panelKey, cfg.name);
+    }
+    if (subtitleEl) {
+      subtitleEl.textContent = t('layout.contextSubtitle');
+    }
+  }
+
+  private setupViewTabs(): void {
+    document.querySelectorAll<HTMLButtonElement>('.wm-variant-tab').forEach((tab) => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.wm-variant-tab').forEach((t) => t.classList.remove('active'));
+        tab.classList.add('active');
+        const view = tab.dataset.view;
+        if (view) {
+          const panelKey = getViewTabPanel(view);
+          this.activateContextPanel(panelKey);
+        }
+      });
+    });
+  }
+
+  private setupSidebarNav(): void {
+    const mount = document.getElementById('sidebarNavMount');
+    if (!mount) return;
+
+    this.sidebarNav = new SidebarNav(mount, {
+      panelSettings: this.ctx.panelSettings,
+      getPanelLabel: (key, fallback) => this.getLocalizedPanelName(key, fallback),
+      onSelectPanel: (key) => this.activateContextPanel(key),
+      isDesktopApp: this.ctx.isDesktopApp,
+    });
+  }
+
+  private resolveInitialContextPanel(): string {
+    try {
+      const saved = localStorage.getItem('wm-active-context-panel');
+      if (saved && this.ctx.panels[saved] && this.ctx.panelSettings[saved]?.enabled) {
+        return saved;
+      }
+    } catch { /* ignore */ }
+    const preferred = getViewTabPanel('globe');
+    if (this.ctx.panels[preferred] && this.ctx.panelSettings[preferred]?.enabled) {
+      return preferred;
+    }
+    for (const key of Object.keys(this.ctx.panelSettings)) {
+      if (key !== 'map' && this.ctx.panelSettings[key]?.enabled && this.ctx.panels[key]) {
+        return key;
+      }
+    }
+    return preferred;
   }
 
   renderLayout(): void {
     this.ctx.container.innerHTML = `
-      <div class="header">
-        <div class="header-left">
-          <div class="variant-switcher">${(() => {
-            const local = this.ctx.isDesktopApp || location.hostname === 'localhost' || location.hostname === '127.0.0.1';
-            const vHref = (v: string, prod: string) => local || SITE_VARIANT === v ? '#' : prod;
-            const vTarget = (v: string) => !local && SITE_VARIANT !== v ? 'target="_blank" rel="noopener"' : '';
-            return `
-            <a href="${vHref('full', 'https://worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'full' ? 'active' : ''}"
-               data-variant="full"
-               ${vTarget('full')}
-               title="${t('header.world')}${SITE_VARIANT === 'full' ? ` ${t('common.currentVariant')}` : ''}">
-              <span class="variant-icon">🌍</span>
-              <span class="variant-label">${t('header.world')}</span>
-            </a>
-            <span class="variant-divider"></span>
-            <a href="${vHref('tech', 'https://tech.worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'tech' ? 'active' : ''}"
-               data-variant="tech"
-               ${vTarget('tech')}
-               title="${t('header.tech')}${SITE_VARIANT === 'tech' ? ` ${t('common.currentVariant')}` : ''}">
-              <span class="variant-icon">💻</span>
-              <span class="variant-label">${t('header.tech')}</span>
-            </a>
-            <span class="variant-divider"></span>
-            <a href="${vHref('finance', 'https://finance.worldmonitor.app')}"
-               class="variant-option ${SITE_VARIANT === 'finance' ? 'active' : ''}"
-               data-variant="finance"
-               ${vTarget('finance')}
-               title="${t('header.finance')}${SITE_VARIANT === 'finance' ? ` ${t('common.currentVariant')}` : ''}">
-              <span class="variant-icon">📈</span>
-              <span class="variant-label">${t('header.finance')}</span>
-            </a>
-            ${SITE_VARIANT === 'happy' ? `<span class="variant-divider"></span>
-            <a href="${vHref('happy', 'https://happy.worldmonitor.app')}"
-               class="variant-option active"
-               data-variant="happy"
-               ${vTarget('happy')}
-               title="Good News ${t('common.currentVariant')}">
-              <span class="variant-icon">☀️</span>
-              <span class="variant-label">Good News</span>
-            </a>` : ''}`;
-          })()}</div>
-          <span class="logo">MONITOR</span><span class="version">v${__APP_VERSION__}</span>${BETA_MODE ? '<span class="beta-badge">BETA</span>' : ''}
-          <a href="https://x.com/eliehabib" target="_blank" rel="noopener" class="credit-link">
-            <svg class="x-logo" width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/></svg>
-            <span class="credit-text">@eliehabib</span>
-          </a>
-          <a href="https://github.com/koala73/worldmonitor" target="_blank" rel="noopener" class="github-link" title="${t('header.viewOnGitHub')}">
-            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
-          </a>
-          <div class="status-indicator">
-            <span class="status-dot"></span>
-            <span>${t('header.live')}</span>
-          </div>
-          <div class="region-selector">
-            <select id="regionSelect" class="region-select">
-              <option value="global">${t('components.deckgl.views.global')}</option>
-              <option value="america">${t('components.deckgl.views.americas')}</option>
-              <option value="mena">${t('components.deckgl.views.mena')}</option>
-              <option value="eu">${t('components.deckgl.views.europe')}</option>
-              <option value="asia">${t('components.deckgl.views.asia')}</option>
-              <option value="latam">${t('components.deckgl.views.latam')}</option>
-              <option value="africa">${t('components.deckgl.views.africa')}</option>
-              <option value="oceania">${t('components.deckgl.views.oceania')}</option>
-            </select>
-          </div>
-        </div>
-        <div class="header-right">
-          <!-- TODO: Add "Download App" link here for non-desktop users (this.ctx.isDesktopApp === false) -->
-          <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> ${t('header.search')}</button>
-          ${this.ctx.isDesktopApp ? '' : `<button class="copy-link-btn" id="copyLinkBtn">${t('header.copyLink')}</button>`}
-          <button class="theme-toggle-btn" id="headerThemeToggle" title="${t('header.toggleTheme')}">
-            ${getCurrentTheme() === 'dark'
+      <div class="wm-shell">
+        <div class="wm-topbar header">
+          <div class="wm-logo-dot"></div>
+          <div class="wm-logo-text">${t('app.title')}</div>
+          <span class="version">v${__APP_VERSION__}</span>${BETA_MODE ? `<span class="beta-badge">${t('header.beta')}</span>` : ''}
+          <div class="header-left wm-topbar-extras"></div>
+          <div class="wm-topbar-right header-right">
+            <div class="status-indicator">
+              <span class="status-dot"></span>
+              <span>${t('header.live')}</span>
+            </div>
+            <div class="language-selector">
+              <select id="languageSelect" class="language-select" title="${t('header.languageLabel')}" aria-label="${t('header.languageLabel')}">
+                ${HEADER_LANGUAGES.map(({ code, label }) => {
+                  const selected = code === getCurrentLanguage() ? ' selected' : '';
+                  return `<option value="${code}"${selected}>${label}</option>`;
+                }).join('')}
+              </select>
+            </div>
+            <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> ${t('header.search')}</button>
+            ${this.ctx.isDesktopApp ? '' : `<button class="copy-link-btn" id="copyLinkBtn">${t('header.copyLink')}</button>`}
+            <button class="theme-toggle-btn" id="headerThemeToggle" title="${t('header.toggleTheme')}">
+              ${getCurrentTheme() === 'dark'
         ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>'
         : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.79A9 9 0 1111.21 3 7 7 0 0021 12.79z"/></svg>'}
-          </button>
-          ${this.ctx.isDesktopApp ? '' : `<button class="fullscreen-btn" id="fullscreenBtn" title="${t('header.fullscreen')}">⛶</button>`}
-          ${SITE_VARIANT === 'happy' ? `<button class="tv-mode-btn" id="tvModeBtn" title="TV Mode (Shift+T)"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>` : ''}
-          <span id="unifiedSettingsMount"></span>
+            </button>
+            ${this.ctx.isDesktopApp ? '' : `<button class="fullscreen-btn" id="fullscreenBtn" title="${t('header.fullscreen')}">⛶</button>`}
+            ${SITE_VARIANT === 'happy' ? `<button class="tv-mode-btn" id="tvModeBtn" title="${t('header.tvMode')}"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg></button>` : ''}
+            <span id="unifiedSettingsMount"></span>
+          </div>
         </div>
-      </div>
-      <div class="main-content">
-        <div class="map-section" id="mapSection">
-          <div class="panel-header">
-            <div class="panel-header-left">
-              <span class="panel-title">${SITE_VARIANT === 'tech' ? t('panels.techMap') : SITE_VARIANT === 'happy' ? 'Good News Map' : t('panels.map')}</span>
+
+        <div class="wm-frame">
+          <aside class="wm-sidebar" id="sidebarNavMount" aria-label="${t('layout.sidebarLabel')}"></aside>
+
+          <div class="wm-main main-content">
+            <div class="wm-variant-tabs" role="tablist">
+              <button type="button" class="wm-variant-tab active" data-view="globe" role="tab">${t('layout.viewGlobe')}</button>
+              <button type="button" class="wm-variant-tab" data-view="timeline" role="tab">${t('layout.viewTimeline')}</button>
+              <button type="button" class="wm-variant-tab" data-view="heatmap" role="tab">${t('layout.viewHeatmap')}</button>
+              <button type="button" class="wm-variant-tab" data-view="country-intel" role="tab">${t('layout.viewCountryIntel')}</button>
             </div>
-            <span class="header-clock" id="headerClock"></span>
-            <div style="display:flex;align-items:center;gap:2px">
-              <button class="map-pin-btn" id="mapFullscreenBtn" title="Fullscreen">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
-              </button>
-              <button class="map-pin-btn" id="mapPinBtn" title="${t('header.pinMap')}">
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V7a1 1 0 011-1 1 1 0 001-1V4a1 1 0 00-1-1H8a1 1 0 00-1 1v1a1 1 0 001 1 1 1 0 011 1v3.76z"/>
-                </svg>
-              </button>
+
+            <div class="wm-content-header">
+              <div>
+                <div class="wm-content-title" id="contextPanelTitle">${t('panels.map')}</div>
+                <div class="wm-content-subtitle" id="contextPanelSubtitle">${t('layout.contextSubtitle')}</div>
+              </div>
+              <div class="wm-header-filters">
+                <span class="wm-header-clock header-clock" id="headerClock"></span>
+                <div class="region-selector">
+                  <select id="regionSelect" class="region-select">
+                    <option value="global">${t('components.deckgl.views.global')}</option>
+                    <option value="america">${t('components.deckgl.views.americas')}</option>
+                    <option value="mena">${t('components.deckgl.views.mena')}</option>
+                    <option value="eu">${t('components.deckgl.views.europe')}</option>
+                    <option value="asia">${t('components.deckgl.views.asia')}</option>
+                    <option value="latam">${t('components.deckgl.views.latam')}</option>
+                    <option value="africa">${t('components.deckgl.views.africa')}</option>
+                    <option value="oceania">${t('components.deckgl.views.oceania')}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div class="wm-content-body">
+              <div class="wm-map-area">
+                <div class="map-section" id="mapSection">
+                  <div class="panel-header">
+                    <div class="panel-header-left">
+                      <span class="panel-title">${SITE_VARIANT === 'tech' ? t('panels.techMap') : SITE_VARIANT === 'happy' ? t('panels.goodNewsMap') : t('panels.map')}</span>
+                    </div>
+                    <div style="display:flex;align-items:center;gap:2px">
+                      <button class="map-pin-btn" id="mapFullscreenBtn" title="${t('header.fullscreen')}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/><path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/></svg>
+                      </button>
+                      <button class="map-pin-btn" id="mapPinBtn" title="${t('header.pinMap')}">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+                          <path d="M12 17v5M9 10.76a2 2 0 01-1.11 1.79l-1.78.9A2 2 0 005 15.24V16a1 1 0 001 1h12a1 1 0 001-1v-.76a2 2 0 00-1.11-1.79l-1.78-.9A2 2 0 0115 10.76V7a1 1 0 011-1 1 1 0 001-1V4a1 1 0 00-1-1H8a1 1 0 00-1 1v1a1 1 0 001 1 1 1 0 011 1v3.76z"/>
+                        </svg>
+                      </button>
+                    </div>
+                  </div>
+                  <div class="map-container" id="mapContainer"></div>
+                  ${SITE_VARIANT === 'happy' ? `<button class="tv-exit-btn" id="tvExitBtn">${t('header.exitTvMode')}</button>` : ''}
+                  <div class="map-resize-handle" id="mapResizeHandle"></div>
+                </div>
+              </div>
+
+              <aside class="wm-right-panel">
+                <div class="wm-right-panel-header">
+                  <div class="wm-right-panel-title">${t('layout.contextPanel')}</div>
+                  <div class="wm-right-active-line"></div>
+                </div>
+                <div class="panels-grid" id="panelsGrid"></div>
+              </aside>
             </div>
           </div>
-          <div class="map-container" id="mapContainer"></div>
-          ${SITE_VARIANT === 'happy' ? '<button class="tv-exit-btn" id="tvExitBtn">Exit TV Mode</button>' : ''}
-          <div class="map-resize-handle" id="mapResizeHandle"></div>
         </div>
-        <div class="panels-grid" id="panelsGrid"></div>
       </div>
     `;
 
@@ -286,7 +360,7 @@ export class PanelLayoutManager implements AppModule {
     if (!this.criticalBannerEl) {
       this.criticalBannerEl = document.createElement('div');
       this.criticalBannerEl.className = 'critical-posture-banner';
-      const header = document.querySelector('.header');
+      const header = document.querySelector('.wm-topbar') ?? document.querySelector('.header');
       if (header) header.insertAdjacentElement('afterend', this.criticalBannerEl);
     }
 
@@ -297,9 +371,9 @@ export class PanelLayoutManager implements AppModule {
         <span class="banner-icon">${isCritical ? '🚨' : '⚠️'}</span>
         <span class="banner-headline">${escapeHtml(top.headline)}</span>
         <span class="banner-stats">${top.totalAircraft} aircraft • ${escapeHtml(top.summary)}</span>
-        ${top.strikeCapable ? '<span class="banner-strike">STRIKE CAPABLE</span>' : ''}
+        ${top.strikeCapable ? `<span class="banner-strike">${t('header.strikeCapable')}</span>` : ''}
       </div>
-      <button class="banner-view" data-lat="${top.centerLat}" data-lon="${top.centerLon}">View Region</button>
+      <button class="banner-view" data-lat="${top.centerLat}" data-lon="${top.centerLon}">${t('header.viewRegion')}</button>
       <button class="banner-dismiss">×</button>
     `;
 
@@ -333,6 +407,10 @@ export class PanelLayoutManager implements AppModule {
       const panel = this.ctx.panels[key];
       panel?.toggle(config.enabled);
     });
+    this.sidebarNav?.refresh();
+    if (this.activeContextPanel && !this.ctx.panelSettings[this.activeContextPanel]?.enabled) {
+      this.activateContextPanel(this.resolveInitialContextPanel());
+    }
   }
 
   private createPanels(): void {
@@ -728,10 +806,14 @@ export class PanelLayoutManager implements AppModule {
       const panel = this.ctx.panels[key];
       if (panel) {
         const el = panel.getElement();
-        this.makeDraggable(el, key);
+        el.dataset.panel = key;
         panelsGrid.appendChild(el);
       }
     });
+
+    this.setupSidebarNav();
+    this.setupViewTabs();
+    this.activateContextPanel(this.resolveInitialContextPanel());
 
     this.ctx.map.onTimeRangeChanged((range) => {
       this.ctx.currentTimeRange = range;
@@ -871,119 +953,6 @@ export class PanelLayoutManager implements AppModule {
         saveToStorage(STORAGE_KEYS.mapLayers, this.ctx.mapLayers);
         this.ctx.map.triggerNuclearClick(asset.id);
         break;
-    }
-  }
-
-  private makeDraggable(el: HTMLElement, key: string): void {
-    el.dataset.panel = key;
-    let isDragging = false;
-    let dragStarted = false;
-    let startX = 0;
-    let startY = 0;
-    let rafId = 0;
-    const DRAG_THRESHOLD = 8;
-
-    const onMouseDown = (e: MouseEvent) => {
-      if (e.button !== 0) return;
-      const target = e.target as HTMLElement;
-      if (el.dataset.resizing === 'true') return;
-      if (
-        target.classList?.contains('panel-resize-handle') ||
-        target.closest?.('.panel-resize-handle') ||
-        target.classList?.contains('panel-col-resize-handle') ||
-        target.closest?.('.panel-col-resize-handle')
-      ) return;
-      if (target.closest('button, a, input, select, textarea, .panel-content')) return;
-
-      isDragging = true;
-      dragStarted = false;
-      startX = e.clientX;
-      startY = e.clientY;
-      e.preventDefault();
-    };
-
-    const onMouseMove = (e: MouseEvent) => {
-      if (!isDragging) return;
-      if (!dragStarted) {
-        const dx = Math.abs(e.clientX - startX);
-        const dy = Math.abs(e.clientY - startY);
-        if (dx < DRAG_THRESHOLD && dy < DRAG_THRESHOLD) return;
-        dragStarted = true;
-        el.classList.add('dragging');
-      }
-      const cx = e.clientX;
-      const cy = e.clientY;
-      if (rafId) cancelAnimationFrame(rafId);
-      rafId = requestAnimationFrame(() => {
-        this.handlePanelDragMove(el, cx, cy);
-        rafId = 0;
-      });
-    };
-
-    const onMouseUp = () => {
-      if (!isDragging) return;
-      isDragging = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = 0; }
-      if (dragStarted) {
-        el.classList.remove('dragging');
-        this.savePanelOrder();
-      }
-      dragStarted = false;
-    };
-
-    el.addEventListener('mousedown', onMouseDown);
-    document.addEventListener('mousemove', onMouseMove);
-    document.addEventListener('mouseup', onMouseUp);
-
-    this.panelDragCleanupHandlers.push(() => {
-      el.removeEventListener('mousedown', onMouseDown);
-      document.removeEventListener('mousemove', onMouseMove);
-      document.removeEventListener('mouseup', onMouseUp);
-      if (rafId) {
-        cancelAnimationFrame(rafId);
-        rafId = 0;
-      }
-      isDragging = false;
-      dragStarted = false;
-      el.classList.remove('dragging');
-    });
-  }
-
-  private handlePanelDragMove(dragging: HTMLElement, clientX: number, clientY: number): void {
-    const grid = document.getElementById('panelsGrid');
-    if (!grid) return;
-
-    dragging.style.pointerEvents = 'none';
-    const target = document.elementFromPoint(clientX, clientY);
-    dragging.style.pointerEvents = '';
-
-    if (!target) return;
-    const targetPanel = target.closest('.panel') as HTMLElement | null;
-    if (!targetPanel || targetPanel === dragging || targetPanel.classList.contains('hidden')) return;
-    if (targetPanel.parentElement !== grid) return;
-
-    const targetRect = targetPanel.getBoundingClientRect();
-    const draggingRect = dragging.getBoundingClientRect();
-
-    const children = Array.from(grid.children);
-    const dragIdx = children.indexOf(dragging);
-    const targetIdx = children.indexOf(targetPanel);
-    if (dragIdx === -1 || targetIdx === -1) return;
-
-    const sameRow = Math.abs(draggingRect.top - targetRect.top) < 30;
-    const targetMid = sameRow
-      ? targetRect.left + targetRect.width / 2
-      : targetRect.top + targetRect.height / 2;
-    const cursorPos = sameRow ? clientX : clientY;
-
-    if (dragIdx < targetIdx) {
-      if (cursorPos > targetMid) {
-        grid.insertBefore(dragging, targetPanel.nextSibling);
-      }
-    } else {
-      if (cursorPos < targetMid) {
-        grid.insertBefore(dragging, targetPanel);
-      }
     }
   }
 

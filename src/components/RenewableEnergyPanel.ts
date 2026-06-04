@@ -11,10 +11,11 @@ import * as d3 from 'd3';
 import type { RenewableEnergyData, RegionRenewableData, CapacitySeries } from '@/services/renewable-energy-data';
 import { getCSSColor } from '@/utils';
 import { replaceChildren } from '@/utils/dom-utils';
+import { t } from '@/services/i18n';
 
 export class RenewableEnergyPanel extends Panel {
   constructor() {
-    super({ id: 'renewable', title: 'Renewable Energy', trackActivity: false });
+    super({ id: 'renewable', title: t('panels.renewable'), trackActivity: false });
   }
 
   /**
@@ -33,7 +34,7 @@ export class RenewableEnergyPanel extends Panel {
         textAlign: 'center',
         fontSize: '13px',
       });
-      empty.textContent = 'No renewable energy data available';
+      empty.textContent = t('happy.renewable.empty');
       this.content.appendChild(empty);
       return;
     }
@@ -149,7 +150,7 @@ export class RenewableEnergyPanel extends Panel {
       .attr('dy', '1.4em')
       .attr('fill', getCSSColor('--text-dim'))
       .attr('font-size', '10px')
-      .text('Renewable');
+      .text(t('happy.renewable.gaugeLabel'));
 
     // Data year label below gauge
     const yearLabel = document.createElement('div');
@@ -160,7 +161,7 @@ export class RenewableEnergyPanel extends Panel {
       color: 'var(--text-dim)',
       marginTop: '4px',
     });
-    yearLabel.textContent = `Data from ${year}`;
+    yearLabel.textContent = t('happy.renewable.dataFrom', { year });
     container.appendChild(yearLabel);
   }
 
@@ -324,7 +325,7 @@ export class RenewableEnergyPanel extends Panel {
     // Add a section header
     const header = document.createElement('div');
     header.className = 'capacity-header';
-    header.textContent = 'US Installed Capacity (EIA)';
+    header.textContent = t('happy.renewable.usCapacity');
     section.appendChild(header);
 
     // Build the chart
@@ -484,9 +485,9 @@ export class RenewableEnergyPanel extends Panel {
     legend.className = 'capacity-legend';
 
     const items: Array<{ color: string; label: string }> = [
-      { color: solarColor, label: 'Solar' },
-      { color: windColor, label: 'Wind' },
-      { color: coalColor, label: 'Coal' },
+      { color: solarColor, label: t('happy.renewable.solar') },
+      { color: windColor, label: t('happy.renewable.wind') },
+      { color: coalColor, label: t('happy.renewable.coal') },
     ];
 
     for (const item of items) {

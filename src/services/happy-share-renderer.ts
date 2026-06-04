@@ -5,7 +5,7 @@
  */
 import type { NewsItem } from '@/types';
 import type { HappyContentCategory } from '@/services/positive-classifier';
-import { HAPPY_CATEGORY_LABELS } from '@/services/positive-classifier';
+import { getHappyCategoryLabel } from '@/services/happy-category-labels';
 
 const SIZE = 1080;
 const PAD = 80;
@@ -104,7 +104,7 @@ export async function renderHappyShareCard(item: NewsItem): Promise<HTMLCanvasEl
   let y = PAD;
 
   // -- Category badge (pill shape, top-left) --
-  const categoryLabel = HAPPY_CATEGORY_LABELS[category];
+  const categoryLabel = getHappyCategoryLabel(category);
   ctx.font = '700 24px Nunito, system-ui, sans-serif';
   const badgeTextW = ctx.measureText(categoryLabel).width;
   const badgePadX = 16;

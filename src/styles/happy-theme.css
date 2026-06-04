@@ -1238,7 +1238,7 @@
 [data-tv-mode] .fullscreen-btn,
 [data-tv-mode] .tv-mode-btn,
 [data-tv-mode] #regionSelect,
-[data-tv-mode] #langSelect {
+[data-tv-mode] #languageSelect {
   display: none !important;
 }
 

@@ -1,4 +1,5 @@
 import { Panel } from './Panel';
+import { t } from '@/services/i18n';
 
 interface CityEntry {
   id: string;
@@ -42,11 +43,11 @@ const WORLD_CITIES: CityEntry[] = [
   { id: 'kuala-lumpur', city: 'Kuala Lumpur', label: 'Bursa', timezone: 'Asia/Kuala_Lumpur', marketOpen: 9, marketClose: 17 },
 ];
 
-const CITY_REGIONS: { name: string; ids: string[] }[] = [
-  { name: 'Americas', ids: ['new-york', 'chicago', 'toronto', 'los-angeles', 'mexico-city', 'sao-paulo', 'buenos-aires'] },
-  { name: 'Europe', ids: ['london', 'paris', 'frankfurt', 'zurich', 'moscow', 'istanbul'] },
-  { name: 'Middle East & Africa', ids: ['riyadh', 'dubai', 'cairo', 'lagos', 'johannesburg'] },
-  { name: 'Asia-Pacific', ids: ['mumbai', 'bangkok', 'jakarta', 'kuala-lumpur', 'singapore', 'hong-kong', 'shanghai', 'taipei', 'seoul', 'tokyo', 'sydney', 'auckland'] },
+const CITY_REGIONS: { nameKey: string; ids: string[] }[] = [
+  { nameKey: 'happy.worldClock.regions.americas', ids: ['new-york', 'chicago', 'toronto', 'los-angeles', 'mexico-city', 'sao-paulo', 'buenos-aires'] },
+  { nameKey: 'happy.worldClock.regions.europe', ids: ['london', 'paris', 'frankfurt', 'zurich', 'moscow', 'istanbul'] },
+  { nameKey: 'happy.worldClock.regions.middleEastAfrica', ids: ['riyadh', 'dubai', 'cairo', 'lagos', 'johannesburg'] },
+  { nameKey: 'happy.worldClock.regions.asiaPacific', ids: ['mumbai', 'bangkok', 'jakarta', 'kuala-lumpur', 'singapore', 'hong-kong', 'shanghai', 'taipei', 'seoul', 'tokyo', 'sydney', 'auckland'] },
 ];
 
 const TIMEZONE_TO_CITY: Record<string, string> = {};
@@ -182,14 +183,14 @@ export class WorldClockPanel extends Panel {
   private dragStartY = 0;
 
   constructor() {
-    super({ id: 'world-clock', title: 'World Clock', trackActivity: false });
+    super({ id: 'world-clock', title: t('panels.worldClock'), trackActivity: false });
     this.homeCityId = detectHomeCity();
     this.selectedCities = loadSelectedCities();
 
     this.settingsBtn = document.createElement('button');
     this.settingsBtn.className = 'wc-settings-btn';
     this.settingsBtn.textContent = '\u2699';
-    this.settingsBtn.title = 'Select cities';
+    this.settingsBtn.title = t('happy.worldClock.selectCities');
     this.settingsBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       this.toggleSettings();
@@ -220,12 +221,12 @@ export class WorldClockPanel extends Panel {
     this.showingSettings = !this.showingSettings;
     if (this.showingSettings) {
       this.settingsBtn.textContent = '\u2713';
-      this.settingsBtn.title = 'Done';
+      this.settingsBtn.title = t('happy.worldClock.done');
       this.settingsBtn.classList.add('wc-active');
       this.renderSettings();
     } else {
       this.settingsBtn.textContent = '\u2699';
-      this.settingsBtn.title = 'Select cities';
+      this.settingsBtn.title = t('happy.worldClock.selectCities');
       this.settingsBtn.classList.remove('wc-active');
       this.renderClocks();
     }
@@ -234,7 +235,7 @@ export class WorldClockPanel extends Panel {
   private renderSettings(): void {
     let html = STYLE + '<div class="wc-settings-view">';
     for (const region of CITY_REGIONS) {
-      html += `<div class="wc-region-header">${region.name}</div><div class="wc-region-grid">`;
+      html += `<div class="wc-region-header">${t(region.nameKey)}</div><div class="wc-region-grid">`;
       for (const id of region.ids) {
         const city = WORLD_CITIES.find(c => c.id === id);
         if (!city) continue;
@@ -320,7 +321,7 @@ export class WorldClockPanel extends Panel {
       .filter((c): c is CityEntry => !!c);
 
     if (sorted.length === 0) {
-      this.setContent(STYLE + '<div class="wc-empty">No cities selected. Click \u2699 to add cities.</div>');
+      this.setContent(STYLE + `<div class="wc-empty">${t('happy.worldClock.noCities')}</div>`);
       return;
     }
 
@@ -337,15 +338,15 @@ export class WorldClockPanel extends Panel {
       if (city.marketOpen !== undefined && city.marketClose !== undefined) {
         const isOpen = isWeekday && h >= city.marketOpen && h < city.marketClose;
         statusHtml = isOpen
-          ? '<span class="wc-status open"><span class="wc-dot open"></span>OPEN</span>'
-          : '<span class="wc-status closed"><span class="wc-dot closed"></span>CLSD</span>';
+          ? `<span class="wc-status open"><span class="wc-dot open"></span>${t('happy.worldClock.marketOpen')}</span>`
+          : `<span class="wc-status closed"><span class="wc-dot closed"></span>${t('happy.worldClock.marketClosed')}</span>`;
       }
 
       const rowCls = ['wc-row'];
       if (isHome) rowCls.push('wc-home');
       if (!isDay) rowCls.push('wc-night');
 
-      html += `<div class="${rowCls.join(' ')}" data-city-id="${city.id}"><div class="wc-drag-handle" title="Drag to reorder">\u22EE</div><div class="wc-info"><div class="wc-name">${city.city}${isHome ? '<span class="wc-home-tag">\u2302</span>' : ''}</div><div class="wc-detail"><span class="wc-exchange">${city.label}</span>${statusHtml}</div></div><div class="wc-clock"><div class="wc-time">${pad2(h)}:${pad2(m)}:${pad2(s)}</div><div class="wc-tz"><div class="wc-bar-wrap"><div class="wc-bar ${isDay ? 'day' : 'night'}" style="width:${pct.toFixed(1)}%"></div></div><span>${dayOfWeek} ${abbr}</span></div></div></div>`;
+      html += `<div class="${rowCls.join(' ')}" data-city-id="${city.id}"><div class="wc-drag-handle" title="${t('happy.worldClock.dragToReorder')}">\u22EE</div><div class="wc-info"><div class="wc-name">${city.city}${isHome ? '<span class="wc-home-tag">\u2302</span>' : ''}</div><div class="wc-detail"><span class="wc-exchange">${city.label}</span>${statusHtml}</div></div><div class="wc-clock"><div class="wc-time">${pad2(h)}:${pad2(m)}:${pad2(s)}</div><div class="wc-tz"><div class="wc-bar-wrap"><div class="wc-bar ${isDay ? 'day' : 'night'}" style="width:${pct.toFixed(1)}%"></div></div><span>${dayOfWeek} ${abbr}</span></div></div></div>`;
     }
     html += '</div>';
     this.setContent(html);

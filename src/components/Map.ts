@@ -2549,7 +2549,7 @@ export class MapComponent {
           const darkIndicator = document.createElement('div');
           darkIndicator.className = 'dark-vessel-indicator';
           darkIndicator.textContent = '⚠️';
-          darkIndicator.title = 'AIS Signal Lost';
+          darkIndicator.title = t('components.map.aisSignalLost');
           div.appendChild(darkIndicator);
         }
 

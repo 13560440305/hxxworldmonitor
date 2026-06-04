@@ -39,12 +39,13 @@ import {
   trackMapViewChange,
   trackMapLayerToggle,
   trackPanelToggled,
+  trackLanguageChange,
 } from '@/services/analytics';
 import { invokeTauri } from '@/services/tauri-bridge';
 import { dataFreshness } from '@/services/data-freshness';
 import { mlWorker } from '@/services/ml-worker';
 import { UnifiedSettings } from '@/components/UnifiedSettings';
-import { t } from '@/services/i18n';
+import { t, changeLanguage } from '@/services/i18n';
 import { TvModeController } from '@/services/tv-mode';
 
 export interface EventHandlerCallbacks {
@@ -213,7 +214,7 @@ export class EventHandlerManager implements AppModule {
 
     const isLocalDev = location.hostname === 'localhost' || location.hostname === '127.0.0.1';
     if (this.ctx.isDesktopApp || isLocalDev) {
-      this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option').forEach(link => {
+      this.ctx.container.querySelectorAll<HTMLAnchorElement>('.variant-option, .wm-nav-variant').forEach(link => {
         link.addEventListener('click', (e) => {
           const variant = link.dataset.variant;
           if (variant && variant !== SITE_VARIANT) {
@@ -240,6 +241,12 @@ export class EventHandlerManager implements AppModule {
     regionSelect?.addEventListener('change', () => {
       this.ctx.map?.setView(regionSelect.value as MapView);
       trackMapViewChange(regionSelect.value);
+    });
+
+    const languageSelect = document.getElementById('languageSelect') as HTMLSelectElement;
+    languageSelect?.addEventListener('change', () => {
+      trackLanguageChange(languageSelect.value);
+      void changeLanguage(languageSelect.value);
     });
 
     this.boundResizeHandler = () => {
@@ -715,7 +722,7 @@ export class EventHandlerManager implements AppModule {
       mapSection.classList.toggle('live-news-fullscreen', isFullscreen);
       document.body.classList.toggle('live-news-fullscreen-active', isFullscreen);
       btn.innerHTML = isFullscreen ? shrinkSvg : expandSvg;
-      btn.title = isFullscreen ? 'Exit fullscreen' : 'Fullscreen';
+      btn.title = isFullscreen ? t('header.exitFullscreen') : t('header.fullscreen');
     };
 
     btn.addEventListener('click', toggle);

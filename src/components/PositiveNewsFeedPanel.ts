@@ -1,10 +1,12 @@
 import { Panel } from './Panel';
 import type { NewsItem } from '@/types';
 import type { HappyContentCategory } from '@/services/positive-classifier';
-import { HAPPY_CATEGORY_ALL, HAPPY_CATEGORY_LABELS } from '@/services/positive-classifier';
+import { HAPPY_CATEGORY_ALL } from '@/services/positive-classifier';
+import { getHappyCategoryLabel } from '@/services/happy-category-labels';
 import { shareHappyCard } from '@/services/happy-share-renderer';
 import { formatTime } from '@/utils';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
+import { t } from '@/services/i18n';
 
 /**
  * PositiveNewsFeedPanel -- scrolling positive news feed with category filter bar
@@ -18,7 +20,7 @@ export class PositiveNewsFeedPanel extends Panel {
   private filterClickHandlers: Map<HTMLButtonElement, () => void> = new Map();
 
   constructor() {
-    super({ id: 'positive-feed', title: 'Good News Feed', showCount: true, trackActivity: true });
+    super({ id: 'positive-feed', title: t('panels.positiveFeed'), showCount: true, trackActivity: true });
     this.createFilterBar();
   }
 
@@ -33,7 +35,7 @@ export class PositiveNewsFeedPanel extends Panel {
     // "All" button (active by default)
     const allBtn = document.createElement('button');
     allBtn.className = 'positive-filter-btn active';
-    allBtn.textContent = 'All';
+    allBtn.textContent = t('common.all');
     allBtn.dataset.category = 'all';
     const allHandler = () => this.setFilter('all');
     allBtn.addEventListener('click', allHandler);
@@ -45,7 +47,7 @@ export class PositiveNewsFeedPanel extends Panel {
     for (const category of HAPPY_CATEGORY_ALL) {
       const btn = document.createElement('button');
       btn.className = 'positive-filter-btn';
-      btn.textContent = HAPPY_CATEGORY_LABELS[category];
+      btn.textContent = getHappyCategoryLabel(category);
       btn.dataset.category = category;
       const handler = () => this.setFilter(category);
       btn.addEventListener('click', handler);
@@ -105,7 +107,7 @@ export class PositiveNewsFeedPanel extends Panel {
     this.filteredItems = items;
 
     if (items.length === 0) {
-      this.content.innerHTML = '<div class="positive-feed-empty">No stories in this category yet</div>';
+      this.content.innerHTML = `<div class="positive-feed-empty">${t('happy.positiveFeed.empty')}</div>`;
       return;
     }
 
@@ -149,7 +151,7 @@ export class PositiveNewsFeedPanel extends Panel {
       ? `<div class="positive-card-image"><img src="${sanitizeUrl(item.imageUrl)}" alt="" loading="lazy" onerror="this.parentElement.style.display='none'"></div>`
       : '';
 
-    const categoryLabel = item.happyCategory ? HAPPY_CATEGORY_LABELS[item.happyCategory] : '';
+    const categoryLabel = item.happyCategory ? getHappyCategoryLabel(item.happyCategory) : '';
     const categoryBadgeHtml = item.happyCategory
       ? `<span class="positive-card-category cat-${escapeHtml(item.happyCategory)}">${escapeHtml(categoryLabel)}</span>`
       : '';
@@ -163,7 +165,7 @@ export class PositiveNewsFeedPanel extends Panel {
     </div>
     <span class="positive-card-title">${escapeHtml(item.title)}</span>
     <span class="positive-card-time">${formatTime(item.pubDate)}</span>
-    <button class="positive-card-share" aria-label="Share this story" data-idx="${idx}">
+    <button class="positive-card-share" aria-label="${t('common.shareStory')}" data-idx="${idx}">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 12v8a2 2 0 002 2h12a2 2 0 002-2v-8"/>
         <polyline points="16 6 12 2 8 6"/>

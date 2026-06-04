@@ -12,10 +12,34 @@ import * as d3 from 'd3';
 import { type ProgressDataSet, type ProgressDataPoint } from '@/services/progress-data';
 import { getCSSColor } from '@/utils';
 import { replaceChildren } from '@/utils/dom-utils';
+import { t } from '@/services/i18n';
 
 const CHART_MARGIN = { top: 8, right: 12, bottom: 24, left: 40 };
 const CHART_HEIGHT = 90;
 const RESIZE_DEBOUNCE_MS = 200;
+
+const PROGRESS_LABEL_KEYS: Record<string, string> = {
+  lifeExpectancy: 'happy.progress.lifeExpectancy',
+  literacy: 'happy.progress.literacy',
+  childMortality: 'happy.progress.childMortality',
+  poverty: 'happy.progress.extremePoverty',
+};
+
+const PROGRESS_UNIT_KEYS: Record<string, string> = {
+  years: 'happy.progress.unitYears',
+  '%': 'happy.progress.unitPercent',
+  'per 1,000': 'happy.progress.unitPerThousand',
+};
+
+function getProgressLabel(id: string, fallback: string): string {
+  const key = PROGRESS_LABEL_KEYS[id];
+  return key ? t(key) : fallback;
+}
+
+function getProgressUnit(unit: string): string {
+  const key = PROGRESS_UNIT_KEYS[unit];
+  return key ? t(key) : unit;
+}
 
 export class ProgressChartsPanel extends Panel {
   private datasets: ProgressDataSet[] = [];
@@ -24,7 +48,7 @@ export class ProgressChartsPanel extends Panel {
   private tooltip: HTMLDivElement | null = null;
 
   constructor() {
-    super({ id: 'progress', title: 'Human Progress', trackActivity: false });
+    super({ id: 'progress', title: t('panels.progress'), trackActivity: false });
     this.setupResizeObserver();
   }
 
@@ -40,7 +64,7 @@ export class ProgressChartsPanel extends Panel {
     // Filter out empty datasets
     const valid = datasets.filter(ds => ds.data.length > 0);
     if (valid.length === 0) {
-      this.content.innerHTML = '<div class="progress-charts-empty" style="padding:16px;color:var(--text-dim);text-align:center;">No progress data available</div>';
+      this.content.innerHTML = `<div class="progress-charts-empty" style="padding:16px;color:var(--text-dim);text-align:center;">${t('happy.progress.empty')}</div>`;
       return;
     }
 
@@ -109,7 +133,7 @@ export class ProgressChartsPanel extends Panel {
       fontSize: '12px',
       color: indicator.color,
     });
-    labelSpan.textContent = indicator.label;
+    labelSpan.textContent = getProgressLabel(indicator.id, indicator.label);
 
     const meta = document.createElement('span');
     meta.className = 'progress-chart-meta';
@@ -121,7 +145,7 @@ export class ProgressChartsPanel extends Panel {
     // Build change badge text
     const sign = changePercent >= 0 ? '+' : '';
     const changeText = `${sign}${changePercent.toFixed(1)}% since ${oldest.year}`;
-    const unitText = indicator.unit ? ` (${indicator.unit})` : '';
+    const unitText = indicator.unit ? ` (${getProgressUnit(indicator.unit)})` : '';
     meta.textContent = changeText + unitText;
 
     header.appendChild(labelSpan);

@@ -1,7 +1,7 @@
 import { FEEDS, INTEL_SOURCES, SOURCE_REGION_MAP } from '@/config/feeds';
 import { PANEL_CATEGORY_MAP } from '@/config/panels';
 import { SITE_VARIANT } from '@/config/variant';
-import { LANGUAGES, changeLanguage, getCurrentLanguage, t } from '@/services/i18n';
+import { HEADER_LANGUAGES, changeLanguage, getCurrentLanguage, t } from '@/services/i18n';
 import { getAiFlowSettings, setAiFlowSetting, getStreamQuality, setStreamQuality, STREAM_QUALITY_OPTIONS } from '@/services/ai-flow-settings';
 import type { StreamQuality } from '@/services/ai-flow-settings';
 import { escapeHtml } from '@/utils/sanitize';
@@ -337,9 +337,9 @@ export class UnifiedSettings {
     // Language section
     html += `<div class="ai-flow-section-label">${t('header.languageLabel')}</div>`;
     html += `<select class="unified-settings-lang-select">`;
-    for (const lang of LANGUAGES) {
+    for (const lang of HEADER_LANGUAGES) {
       const selected = lang.code === currentLang ? ' selected' : '';
-      html += `<option value="${lang.code}"${selected}>${lang.flag} ${lang.label}</option>`;
+      html += `<option value="${lang.code}"${selected}>${lang.label}</option>`;
     }
     html += `</select>`;
 

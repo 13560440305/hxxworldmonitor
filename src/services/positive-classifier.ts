@@ -1,5 +1,6 @@
 // Positive content classifier for the happy variant
 // Mirrors the pattern in threat-classifier.ts but for positive news categorization
+// NOTE: No i18n imports here — this module is used by server-side handlers (vite dev).
 
 export type HappyContentCategory =
   | 'science-health'
