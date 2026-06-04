@@ -463,6 +463,7 @@
       "loadingMarkets": "正在加载预测市场...",
       "infrastructure": "基础设施暴露",
       "briefUnavailable": "AI简报不可用 — 请在设置中配置GROQ_API_KEY。",
+      "briefFailed": "情报简报生成失败。",
       "cached": "已缓存",
       "fresh": "最新",
       "noMarkets": "未找到预测市场",
@@ -1535,6 +1536,9 @@
     "belligerents": "交战方",
     "keyDevelopments": "关键进展",
     "unknown": "未知",
+    "translate": "翻译",
+    "translateComingSoon": "翻译功能即将推出。",
+    "translatedContent": "译文",
     "source": "来源",
     "target": "目标",
     "events": "事件",
@@ -2270,7 +2274,8 @@
       "intelligence": "情报",
       "markets": "市场",
       "regional": "地区新闻",
-      "core": "核心"
+      "core": "核心",
+      "startups": "创业公司与风投"
     },
     "viewGlobe": "全球视图",
     "viewTimeline": "时间线",

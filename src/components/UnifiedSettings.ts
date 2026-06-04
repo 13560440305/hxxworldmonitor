@@ -240,7 +240,9 @@ export class UnifiedSettings {
           <div class="panels-search">
             <input type="text" placeholder="${t('header.filterPanels')}" value="${escapeHtml(this.panelFilter)}" />
           </div>
-          <div class="panel-toggle-grid" id="usPanelToggles"></div>
+          <div class="unified-settings-scroll">
+            <div class="panel-toggle-grid" id="usPanelToggles"></div>
+          </div>
         </div>
         <div class="unified-settings-tab-panel${this.activeTab === 'sources' ? ' active' : ''}" data-panel-id="sources">
           <div class="unified-settings-region-wrapper">
@@ -249,7 +251,9 @@ export class UnifiedSettings {
           <div class="sources-search">
             <input type="text" placeholder="${t('header.filterSources')}" value="${escapeHtml(this.sourceFilter)}" />
           </div>
-          <div class="sources-toggle-grid" id="usSourceToggles"></div>
+          <div class="unified-settings-scroll">
+            <div class="sources-toggle-grid" id="usSourceToggles"></div>
+          </div>
           <div class="sources-footer">
             <span class="sources-counter" id="usSourcesCounter"></span>
             <button class="sources-select-all">${t('common.selectAll')}</button>

@@ -8,7 +8,8 @@ import type { TechHubActivity } from '@/services/tech-activity';
 import type { GeoHubActivity } from '@/services/geo-activity';
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
 import { isMobileDevice, getCSSColor } from '@/utils';
-import { t } from '@/services/i18n';
+import { t, getCurrentLanguage } from '@/services/i18n';
+import { translateMapPopupContent } from '@/services/map-popup-translate';
 import { fetchHotspotContext, formatArticleDate, extractDomain, type GdeltArticle } from '@/services/gdelt-intel';
 import { getNaturalEventIcon } from '@/services/eonet';
 import { getHotspotEscalation, getEscalationChange24h } from '@/services/hotspot-escalation';
@@ -161,6 +162,7 @@ export class MapPopup {
   private sheetCurrentOffset = 0;
   private readonly mobileDismissThreshold = 96;
   private outsideListenerTimeoutId: number | null = null;
+  private translatableText = '';
 
   constructor(container: HTMLElement) {
     this.container = container;
@@ -195,6 +197,7 @@ export class MapPopup {
     // Close button handler
     this.popup.querySelector('.popup-close')?.addEventListener('click', () => this.hide());
     this.popup.querySelector('.map-popup-sheet-handle')?.addEventListener('click', () => this.hide());
+    this.injectTranslateUi(data);
 
     if (this.isMobileSheet) {
       this.popup.addEventListener('touchstart', this.handleSheetTouchStart, { passive: true });
@@ -221,6 +224,103 @@ export class MapPopup {
       document.addEventListener('keydown', this.handleEscapeKey);
       this.outsideListenerTimeoutId = null;
     }, 0);
+  }
+
+  private injectTranslateUi(data: PopupData): void {
+    if (!this.popup) return;
+
+    this.translatableText = this.extractTranslatableText(data);
+    const header = this.popup.querySelector('.popup-header');
+    const closeBtn = this.popup.querySelector('.popup-close');
+
+    if (header && closeBtn) {
+      const translateBtn = document.createElement('button');
+      translateBtn.type = 'button';
+      translateBtn.className = 'map-popup-translate-btn';
+      translateBtn.setAttribute('aria-label', t('popups.translate'));
+      translateBtn.textContent = t('popups.translate');
+      header.insertBefore(translateBtn, closeBtn);
+      translateBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        void this.handleTranslateClick();
+      });
+    }
+
+    const translationPanel = document.createElement('div');
+    translationPanel.className = 'map-popup-translation';
+    translationPanel.hidden = true;
+    translationPanel.innerHTML = `
+      <div class="map-popup-translation-label">${escapeHtml(t('popups.translatedContent'))}</div>
+      <div class="map-popup-translation-body"></div>
+    `;
+    this.popup.appendChild(translationPanel);
+  }
+
+  private extractTranslatableText(data: PopupData): string {
+    const parts: string[] = [];
+    const push = (value: unknown): void => {
+      if (typeof value === 'string' && value.trim()) {
+        parts.push(value.trim());
+      }
+    };
+
+    const record = data.data as Record<string, unknown>;
+    push(record.name);
+    push(record.title);
+    push(record.description);
+    push(record.summary);
+    push(record.location);
+    push(record.locationName);
+    push(record.place);
+    push(record.subtext);
+    push(record.category);
+
+    if (data.relatedNews?.length) {
+      for (const item of data.relatedNews.slice(0, 5)) {
+        push(item.title);
+      }
+    }
+
+    const items = record.items;
+    if (Array.isArray(items)) {
+      for (const item of items.slice(0, 5)) {
+        if (item && typeof item === 'object') {
+          const entry = item as Record<string, unknown>;
+          push(entry.title);
+          push(entry.name);
+          push(entry.description);
+        }
+      }
+    }
+
+    if (parts.length > 0) {
+      return parts.join('\n\n');
+    }
+
+    return this.popup?.querySelector('.popup-body')?.textContent?.trim() ?? '';
+  }
+
+  private async handleTranslateClick(): Promise<void> {
+    if (!this.popup) return;
+
+    const btn = this.popup.querySelector<HTMLButtonElement>('.map-popup-translate-btn');
+    const panel = this.popup.querySelector<HTMLElement>('.map-popup-translation');
+    const body = this.popup.querySelector<HTMLElement>('.map-popup-translation-body');
+    if (!btn || !panel || !body) return;
+
+    if (!panel.hidden && body.textContent) {
+      panel.hidden = true;
+      return;
+    }
+
+    btn.classList.add('loading');
+    panel.hidden = false;
+    body.textContent = '';
+
+    const text = this.translatableText || this.popup.querySelector('.popup-body')?.textContent?.trim() || '';
+    const translated = await translateMapPopupContent(text, getCurrentLanguage());
+    btn.classList.remove('loading');
+    body.textContent = translated ?? t('popups.translateComingSoon');
   }
 
   private positionDesktopPopup(data: PopupData, containerRect: DOMRect): void {

@@ -275,13 +275,13 @@ export class CountryIntelManager implements AppModule {
           if (lines.length > 0) {
             this.ctx.countryBriefPage!.updateBrief({ brief: lines.join('\n'), country, code, fallback: true });
           } else {
-            this.ctx.countryBriefPage!.updateBrief({ brief: '', country, code, error: 'No AI service available. Configure GROQ_API_KEY in Settings for full briefs.' });
+            this.ctx.countryBriefPage!.updateBrief({ brief: '', country, code, error: t('modals.countryBrief.briefUnavailable') });
           }
         }
       }
     } catch (err) {
       console.error('[CountryBrief] fetch error:', err);
-      this.ctx.countryBriefPage!.updateBrief({ brief: '', country, code, error: 'Failed to generate brief' });
+      this.ctx.countryBriefPage!.updateBrief({ brief: '', country, code, error: t('modals.countryBrief.briefFailed') });
     }
   }
 

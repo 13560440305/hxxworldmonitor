@@ -254,10 +254,48 @@ body.wm-layout {
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) rgba(255, 255, 255, 0.06);
 }
 
-.wm-sidebar-inner::-webkit-scrollbar { width: 3px; }
-.wm-sidebar-inner::-webkit-scrollbar-thumb { background: rgba(255, 255, 255, 0.08); }
+.wm-sidebar-inner::-webkit-scrollbar {
+  width: 8px;
+}
+
+.wm-sidebar-inner::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.wm-sidebar-inner::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.wm-sidebar-inner::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+[data-theme="light"] .wm-sidebar-inner {
+  scrollbar-color: rgba(0, 0, 0, 0.28) rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .wm-sidebar-inner::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .wm-sidebar-inner::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="light"] .wm-sidebar-inner::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
 
 .wm-sidebar-section {
   padding: 12px 0 4px;
@@ -634,6 +672,51 @@ body.wm-layout .map-control-btn {
   display: none;
 }
 
+/* Right panel scroll area — match sidebar scrollbar visibility */
+.wm-layout .wm-right-panel .panel-content {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(255, 255, 255, 0.28) rgba(255, 255, 255, 0.06);
+}
+
+.wm-layout .wm-right-panel .panel-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.04);
+  border-radius: 4px;
+  margin: 4px 0;
+}
+
+.wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.22);
+  border-radius: 4px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.38);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+[data-theme="light"] .wm-layout .wm-right-panel .panel-content {
+  scrollbar-color: rgba(0, 0, 0, 0.28) rgba(0, 0, 0, 0.06);
+}
+
+[data-theme="light"] .wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-track {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+[data-theme="light"] .wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.22);
+}
+
+[data-theme="light"] .wm-layout .wm-right-panel .panel-content::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.35);
+}
+
 /* Hide legacy header when using wm layout */
 .wm-layout .header:not(.wm-topbar) {
   display: none;
@@ -667,6 +750,11 @@ body.wm-layout .critical-posture-banner {
     flex-wrap: nowrap;
     overflow-x: auto;
     overflow-y: hidden;
+  }
+
+  .wm-sidebar-inner::-webkit-scrollbar {
+    width: auto;
+    height: 8px;
   }
 
   .wm-sidebar-section {

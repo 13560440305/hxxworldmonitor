@@ -1,5 +1,6 @@
 import { escapeHtml, sanitizeUrl } from '@/utils/sanitize';
-import { t } from '@/services/i18n';
+import { t, getCurrentLanguage } from '@/services/i18n';
+import { translateMapPopupContent } from '@/services/map-popup-translate';
 import { getCSSColor } from '@/utils';
 import type { CountryScore } from '@/services/country-instability';
 import type { NewsItem } from '@/types';
@@ -75,6 +76,7 @@ export class CountryBriefPage {
   private boundExportMenuClose: (() => void) | null = null;
   private boundCitationClick: ((e: Event) => void) | null = null;
   private abortController: AbortController = new AbortController();
+  private translatableBriefText = '';
 
   constructor() {
     this.overlay = document.createElement('div');
@@ -310,7 +312,10 @@ export class CountryBriefPage {
                 </section>`}
 
               <section class="cb-section cb-brief-section">
-                <h3 class="cb-section-title">${t('modals.countryBrief.intelBrief')}</h3>
+                <div class="cb-section-head">
+                  <h3 class="cb-section-title">${t('modals.countryBrief.intelBrief')}</h3>
+                  <button type="button" class="cb-translate-btn" hidden aria-label="${t('popups.translate')}">${t('popups.translate')}</button>
+                </div>
                 <div class="cb-brief-content">
                   <div class="intel-brief-loading">
                     <div class="intel-skeleton"></div>
@@ -319,6 +324,10 @@ export class CountryBriefPage {
                     <div class="intel-skeleton short"></div>
                     <span class="intel-loading-text">${t('modals.countryBrief.generatingBrief')}</span>
                   </div>
+                </div>
+                <div class="cb-brief-translation" hidden>
+                  <div class="cb-brief-translation-label">${escapeHtml(t('popups.translatedContent'))}</div>
+                  <div class="cb-brief-translation-body"></div>
                 </div>
               </section>
 
@@ -359,6 +368,10 @@ export class CountryBriefPage {
       </div>`;
 
     this.overlay.querySelector('.cb-close')?.addEventListener('click', () => this.hide());
+    this.overlay.querySelector('.cb-translate-btn')?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      void this.handleBriefTranslate();
+    });
     this.overlay.querySelector('.cb-share-btn')?.addEventListener('click', () => {
       if (this.onShareStory && this.currentCode && this.currentName) {
         this.onShareStory(this.currentCode, this.currentName);
@@ -417,14 +430,24 @@ export class CountryBriefPage {
   public updateBrief(data: CountryIntelData): void {
     if (data.code !== this.currentCode) return;
     const section = this.overlay.querySelector('.cb-brief-content');
+    const translateBtn = this.overlay.querySelector<HTMLElement>('.cb-translate-btn');
+    const translationPanel = this.overlay.querySelector<HTMLElement>('.cb-brief-translation');
     if (!section) return;
+
+    translationPanel && (translationPanel.hidden = true);
+    const translationBody = this.overlay.querySelector<HTMLElement>('.cb-brief-translation-body');
+    if (translationBody) translationBody.textContent = '';
 
     if (data.error || data.skipped || !data.brief) {
       const msg = data.error || data.reason || t('modals.countryBrief.briefUnavailable');
-      section.innerHTML = `<div class="intel-error">${escapeHtml(msg)}</div>`;
+      this.translatableBriefText = msg;
+      if (translateBtn) translateBtn.hidden = true;
+      section.innerHTML = `<div class="cb-brief-error">${escapeHtml(msg)}</div>`;
       return;
     }
 
+    this.translatableBriefText = data.brief;
+    if (translateBtn) translateBtn.hidden = false;
     this.currentBrief = data.brief;
     const formatted = this.formatBrief(data.brief, this.currentHeadlineCount);
     section.innerHTML = `
@@ -433,6 +456,30 @@ export class CountryBriefPage {
         ${data.cached ? `<span class="intel-cached">📋 ${t('modals.countryBrief.cached')}</span>` : `<span class="intel-fresh">✨ ${t('modals.countryBrief.fresh')}</span>`}
         <span class="intel-timestamp">${data.generatedAt ? new Date(data.generatedAt).toLocaleTimeString() : ''}</span>
       </div>`;
+  }
+
+  private async handleBriefTranslate(): Promise<void> {
+    const btn = this.overlay.querySelector<HTMLButtonElement>('.cb-translate-btn');
+    const panel = this.overlay.querySelector<HTMLElement>('.cb-brief-translation');
+    const body = this.overlay.querySelector<HTMLElement>('.cb-brief-translation-body');
+    if (!btn || !panel || !body) return;
+
+    if (!panel.hidden && body.textContent) {
+      panel.hidden = true;
+      return;
+    }
+
+    btn.classList.add('loading');
+    panel.hidden = false;
+    body.textContent = '';
+
+    const text = this.translatableBriefText
+      || this.overlay.querySelector('.cb-brief-text')?.textContent?.trim()
+      || this.overlay.querySelector('.cb-brief-error')?.textContent?.trim()
+      || '';
+    const translated = await translateMapPopupContent(text, getCurrentLanguage());
+    btn.classList.remove('loading');
+    body.textContent = translated ?? t('popups.translateComingSoon');
   }
 
   public updateMarkets(markets: PredictionMarket[]): void {

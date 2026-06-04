@@ -463,6 +463,7 @@
       "loadingMarkets": "Loading prediction markets...",
       "infrastructure": "Infrastructure Exposure",
       "briefUnavailable": "AI brief unavailable — configure GROQ_API_KEY in Settings.",
+      "briefFailed": "Failed to generate intelligence brief.",
       "cached": "Cached",
       "fresh": "Fresh",
       "noMarkets": "No prediction markets found",
@@ -1535,6 +1536,9 @@
     "belligerents": "BELLIGERENTS",
     "keyDevelopments": "KEY DEVELOPMENTS",
     "unknown": "Unknown",
+    "translate": "Translate",
+    "translateComingSoon": "Translation will be available soon.",
+    "translatedContent": "Translation",
     "source": "Source",
     "target": "Target",
     "events": "Events",
@@ -2270,7 +2274,8 @@
       "intelligence": "Intelligence",
       "markets": "Markets",
       "regional": "Regional News",
-      "core": "Core"
+      "core": "Core",
+      "startups": "Startups & VC"
     },
     "viewGlobe": "Globe View",
     "viewTimeline": "Timeline",
