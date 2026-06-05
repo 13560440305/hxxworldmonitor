@@ -18,6 +18,7 @@ import {
   ExportPanel,
   getCurrentTheme,
   setTheme,
+  formatHeaderClock,
 } from '@/utils';
 import {
   STORAGE_KEYS,
@@ -418,7 +419,7 @@ export class EventHandlerManager implements AppModule {
     const el = document.getElementById('headerClock');
     if (!el) return;
     const tick = () => {
-      el.textContent = new Date().toUTCString().replace('GMT', 'UTC');
+      el.textContent = formatHeaderClock();
     };
     tick();
     this.clockIntervalId = setInterval(tick, 1000);

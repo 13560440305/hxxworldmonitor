@@ -19,6 +19,40 @@ export function formatTime(date: Date): string {
   }
 }
 
+/** Header map clock — local time, locale-aware format. */
+export function formatHeaderClock(date: Date = new Date()): string {
+  const lang = getCurrentLanguage();
+
+  try {
+    if (lang === 'en') {
+      const weekdays = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'] as const;
+      const months = ['JAN', 'FEB', 'MAR', 'APR', 'MAY', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC'] as const;
+      const tz = new Intl.DateTimeFormat('en-US', { timeZoneName: 'short' })
+        .formatToParts(date)
+        .find((p) => p.type === 'timeZoneName')?.value ?? '';
+      const pad = (n: number) => String(n).padStart(2, '0');
+      return `${weekdays[date.getDay()]}, ${pad(date.getDate())} ${months[date.getMonth()]} ${date.getFullYear()} ${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())} ${tz}`.trim();
+    }
+
+    return new Intl.DateTimeFormat(getLocale(), {
+      weekday: 'short',
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: false,
+      timeZoneName: 'short',
+    }).format(date);
+  } catch {
+    return date.toLocaleString();
+  }
+}
+
+/** @deprecated Use {@link formatHeaderClock} */
+export const formatHeaderUtcClock = formatHeaderClock;
+
 export function formatPrice(price: number): string {
   if (price >= 1000) {
     return `$${price.toLocaleString(undefined, {
@@ -174,4 +208,4 @@ export { getCSSColor, invalidateColorCache } from './theme-colors';
 export { getStoredTheme, getCurrentTheme, setTheme, applyStoredTheme } from './theme-manager';
 export type { Theme } from './theme-manager';
 
-import { getCurrentLanguage } from '../services/i18n';
+import { getCurrentLanguage, getLocale } from '../services/i18n';
