@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from 'vite';
+import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve, dirname, extname } from 'path';
 import { mkdir, readFile, writeFile } from 'fs/promises';
@@ -8,6 +8,23 @@ import pkg from './package.json';
 
 const isE2E = process.env.VITE_E2E === '1';
 const isDesktopBuild = process.env.VITE_DESKTOP_RUNTIME === '1';
+
+function getPlatformApiProxyTarget(): string | null {
+  const env = loadEnv(
+    process.env.NODE_ENV === 'production' ? 'production' : 'development',
+    process.cwd(),
+    '',
+  );
+  const raw = env.VITE_PLATFORM_API_URL?.trim();
+  if (!raw || ['false', '0', 'off', 'no'].includes(raw.toLowerCase())) return null;
+  try {
+    return new URL(raw).origin;
+  } catch {
+    return null;
+  }
+}
+
+const platformApiProxyTarget = getPlatformApiProxyTarget();
 
 const brotliCompressAsync = promisify(brotliCompress);
 const BROTLI_EXTENSIONS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.txt', '.xml', '.wasm']);
@@ -299,6 +316,7 @@ function sebufApiPlugin(): Plugin {
       positiveEventsServerMod, positiveEventsHandlerMod,
       givingServerMod, givingHandlerMod,
       tradeServerMod, tradeHandlerMod,
+      supplyChainServerMod, supplyChainHandlerMod,
     ] = await Promise.all([
         import('./server/router'),
         import('./server/cors'),
@@ -343,6 +361,8 @@ function sebufApiPlugin(): Plugin {
         import('./server/worldmonitor/giving/v1/handler'),
         import('./src/generated/server/worldmonitor/trade/v1/service_server'),
         import('./server/worldmonitor/trade/v1/handler'),
+        import('./src/generated/server/worldmonitor/supply_chain/v1/service_server'),
+        import('./server/worldmonitor/supply-chain/v1/handler'),
       ]);
 
     const serverOptions = { onError: errorMod.mapErrorToResponse };
@@ -367,6 +387,7 @@ function sebufApiPlugin(): Plugin {
       ...positiveEventsServerMod.createPositiveEventsServiceRoutes(positiveEventsHandlerMod.positiveEventsHandler, serverOptions),
       ...givingServerMod.createGivingServiceRoutes(givingHandlerMod.givingHandler, serverOptions),
       ...tradeServerMod.createTradeServiceRoutes(tradeHandlerMod.tradeHandler, serverOptions),
+      ...supplyChainServerMod.createSupplyChainServiceRoutes(supplyChainHandlerMod.supplyChainHandler, serverOptions),
     ];
     cachedCorsMod = corsMod;
     return routerMod.createRouter(allRoutes);
@@ -893,6 +914,15 @@ export default defineConfig({
       ],
     },
     proxy: {
+      // Self-hosted Platform API — dev same-origin proxy (avoids CSP blocking localhost:8787)
+      ...(platformApiProxyTarget
+        ? {
+            '/platform': {
+              target: platformApiProxyTarget,
+              changeOrigin: true,
+            },
+          }
+        : {}),
       // Yahoo Finance API
       '/api/yahoo': {
         target: 'https://query1.finance.yahoo.com',

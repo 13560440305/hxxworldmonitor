@@ -7,6 +7,9 @@ import type {
   ThreatLevel as ProtoThreatLevel,
 } from '../../../../src/generated/server/worldmonitor/news/v1/service_server';
 import { cachedFetchJson } from '../../../_shared/redis';
+import { isDatabaseEnabled } from '../../../_shared/db';
+import { buildDigestFromPg, isPgDigestEnabled } from '../../../platform/digest-from-pg';
+import { countNewsItems } from '../../../platform/news-repository';
 import { CHROME_UA } from '../../../_shared/constants';
 import { VARIANT_FEEDS, INTEL_SOURCES, type ServerFeed } from './_feeds';
 import { classifyByKeyword, type ThreatLevel } from './_classifier';
@@ -41,7 +44,9 @@ interface ParsedItem {
   classSource: 'keyword';
 }
 
-async function fetchAndParseRss(
+export type { ParsedItem };
+
+export async function fetchAndParseRss(
   feed: ServerFeed,
   variant: string,
   signal: AbortSignal,
@@ -189,6 +194,23 @@ export async function listFeedDigest(
   const digestCacheKey = `news:digest:v1:${variant}:${lang}`;
 
   const fallbackKey = `${variant}:${lang}`;
+
+  if (isPgDigestEnabled() && isDatabaseEnabled()) {
+    try {
+      const pgCount = await countNewsItems();
+      if (pgCount > 0) {
+        const pgDigest = await buildDigestFromPg(variant, lang);
+        if (pgDigest && Object.keys(pgDigest.categories).length > 0) {
+          if (fallbackDigestCache.size > 50) fallbackDigestCache.clear();
+          fallbackDigestCache.set(fallbackKey, { data: pgDigest, ts: Date.now() });
+          return pgDigest;
+        }
+      }
+    } catch (err) {
+      console.warn('[listFeedDigest] PG digest fallback to RSS:', err);
+    }
+  }
+
   try {
     const cached = await cachedFetchJson<ListFeedDigestResponse>(digestCacheKey, 900, async () => {
       return buildDigest(variant, lang);

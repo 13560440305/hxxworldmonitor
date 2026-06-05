@@ -85,6 +85,7 @@ import { canQueueAiClassification, AI_CLASSIFY_MAX_PER_FEED } from '@/services/a
 import { classifyWithAI } from '@/services/threat-classifier';
 import { ingestHeadlines } from '@/services/trending-keywords';
 import type { ListFeedDigestResponse } from '@/generated/client/worldmonitor/news/v1/service_client';
+import { getDigestFetchUrls, isPlatformApiConfigured, fetchPlatformCategoryNews, type PlatformNewsRow } from '@/config/platform-api';
 import type { GetSectorSummaryResponse } from '@/generated/client/worldmonitor/market/v1/service_client';
 import { maybeShowDownloadBanner } from '@/components/DownloadBanner';
 import { mountCommunityWidget } from '@/components/CommunityWidget';
@@ -156,6 +157,31 @@ function protoItemToNewsItem(p: ProtoNewsItem): NewsItem {
   };
 }
 
+const PG_LEVEL_TO_CLIENT: Record<string, ClientThreatLevel> = {
+  critical: 'critical',
+  high: 'high',
+  medium: 'medium',
+  low: 'low',
+  info: 'info',
+};
+
+function platformRowToNewsItem(row: PlatformNewsRow): NewsItem {
+  const level = PG_LEVEL_TO_CLIENT[row.threat_level ?? 'info'] ?? 'info';
+  return {
+    source: row.source,
+    title: row.title,
+    link: row.link,
+    pubDate: new Date(row.published_at),
+    isAlert: row.is_alert,
+    threat: {
+      level,
+      category: (row.category ?? 'general') as import('@/services/threat-classifier').EventCategory,
+      confidence: row.confidence ?? 0,
+      source: 'keyword',
+    },
+  };
+}
+
 const CYBER_LAYER_ENABLED = import.meta.env.VITE_ENABLE_CYBER_LAYER === 'true';
 
 export interface DataLoaderCallbacks {
@@ -175,7 +201,6 @@ export class DataLoaderManager implements AppModule {
   public updateSearchIndex: () => void = () => {};
 
   private digestBreaker = { state: 'closed' as 'closed' | 'open' | 'half-open', failures: 0, cooldownUntil: 0 };
-  private readonly digestRequestTimeoutMs = 8000;
   private readonly digestBreakerCooldownMs = 5 * 60 * 1000;
   private readonly persistedDigestMaxAgeMs = 6 * 60 * 60 * 1000;
   private readonly perFeedFallbackCategoryFeedLimit = 3;
@@ -194,29 +219,55 @@ export class DataLoaderManager implements AppModule {
     stopOrefPolling();
   }
 
+  private countDigestItems(data: ListFeedDigestResponse | null | undefined): number {
+    if (!data?.categories) return 0;
+    return Object.values(data.categories).reduce(
+      (n, bucket) => n + (bucket.items?.length ?? 0),
+      0,
+    );
+  }
+
+  private isUsableDigest(data: ListFeedDigestResponse | null | undefined): data is ListFeedDigestResponse {
+    return this.countDigestItems(data) > 0;
+  }
+
   private async tryFetchDigest(): Promise<ListFeedDigestResponse | null> {
     const now = Date.now();
 
     if (this.digestBreaker.state === 'open') {
       if (now < this.digestBreaker.cooldownUntil) {
-        return this.lastGoodDigest ?? await this.loadPersistedDigest();
+        const cached = this.lastGoodDigest ?? await this.loadPersistedDigest();
+        return this.isUsableDigest(cached) ? cached : null;
       }
       this.digestBreaker.state = 'half-open';
     }
 
     try {
-      const resp = await fetch(
-        `/api/news/v1/list-feed-digest?variant=${SITE_VARIANT}&lang=${getCurrentLanguage()}`,
-        { signal: AbortSignal.timeout(this.digestRequestTimeoutMs) },
-      );
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json() as ListFeedDigestResponse;
-      const catCount = Object.keys(data.categories ?? {}).length;
-      console.info(`[News] Digest fetched: ${catCount} categories`);
-      this.lastGoodDigest = data;
-      this.persistDigest(data);
-      this.digestBreaker = { state: 'closed', failures: 0, cooldownUntil: 0 };
-      return data;
+      const urls = getDigestFetchUrls(SITE_VARIANT, getCurrentLanguage());
+      let lastError: unknown;
+      for (const url of urls) {
+        try {
+          const resp = await fetch(url, {
+            signal: AbortSignal.timeout(this.getDigestRequestTimeoutMs()),
+          });
+          if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+          const data = await resp.json() as ListFeedDigestResponse;
+          const catCount = Object.keys(data.categories ?? {}).length;
+          const itemCount = this.countDigestItems(data);
+          if (itemCount === 0) {
+            throw new Error(`Empty digest (${catCount} categories)`);
+          }
+          console.info(`[News] Digest fetched (${url}): ${catCount} categories, ${itemCount} items`);
+          this.lastGoodDigest = data;
+          this.persistDigest(data);
+          this.digestBreaker = { state: 'closed', failures: 0, cooldownUntil: 0 };
+          return data;
+        } catch (err) {
+          lastError = err;
+          console.warn(`[News] Digest fetch failed (${url}):`, err);
+        }
+      }
+      throw lastError ?? new Error('All digest URLs failed');
     } catch (e) {
       console.warn('[News] Digest fetch failed, using fallback:', e);
       this.digestBreaker.failures++;
@@ -224,7 +275,8 @@ export class DataLoaderManager implements AppModule {
         this.digestBreaker.state = 'open';
         this.digestBreaker.cooldownUntil = now + this.digestBreakerCooldownMs;
       }
-      return this.lastGoodDigest ?? await this.loadPersistedDigest();
+      const cached = this.lastGoodDigest ?? await this.loadPersistedDigest();
+      return this.isUsableDigest(cached) ? cached : null;
     }
   }
 
@@ -237,13 +289,23 @@ export class DataLoaderManager implements AppModule {
       const envelope = await getPersistentCache<ListFeedDigestResponse>('digest:last-good');
       if (!envelope) return null;
       if (Date.now() - envelope.updatedAt > this.persistedDigestMaxAgeMs) return null;
+      if (!this.isUsableDigest(envelope.data)) return null;
       this.lastGoodDigest = envelope.data;
       return envelope.data;
     } catch { return null; }
   }
 
+  private getDigestRequestTimeoutMs(): number {
+    // Server RSS digest uses up to 25s (list-feed-digest OVERALL_DEADLINE_MS)
+    if (SITE_VARIANT === 'finance' || SITE_VARIANT === 'full') return 35_000;
+    if (SITE_VARIANT === 'tech') return 20_000;
+    return 12_000;
+  }
+
   private isPerFeedFallbackEnabled(): boolean {
-    return isFeatureEnabled('newsPerFeedFallback');
+    if (isFeatureEnabled('newsPerFeedFallback')) return true;
+    // Self-hosted: allow RSS fallback when Platform API is configured but PG digest is empty
+    return isPlatformApiConfigured();
   }
 
   private getStaleNewsItems(category: string): NewsItem[] {
@@ -691,6 +753,27 @@ export class DataLoaderManager implements AppModule {
           itemCount: staleItems.length,
         });
         return staleItems;
+      }
+
+      if (isPlatformApiConfigured()) {
+        const pgRows = await fetchPlatformCategoryNews(
+          SITE_VARIANT,
+          getCurrentLanguage(),
+          category,
+        );
+        if (pgRows.length > 0) {
+          let items = pgRows.map(platformRowToNewsItem).filter(i => enabledNames.has(i.source));
+          if (items.length === 0) items = pgRows.map(platformRowToNewsItem);
+          console.info(`[News] Category "${category}" loaded from Platform PG (${items.length} items)`);
+          checkBatchForBreakingAlerts(items);
+          this.flashMapForNews(items);
+          this.renderNewsForCategory(category, items);
+          this.ctx.statusPanel?.updateFeed(category.charAt(0).toUpperCase() + category.slice(1), {
+            status: 'ok',
+            itemCount: items.length,
+          });
+          return items;
+        }
       }
 
       if (!this.isPerFeedFallbackEnabled()) {

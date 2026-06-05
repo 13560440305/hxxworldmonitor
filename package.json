@@ -50,7 +50,13 @@
     "desktop:package:macos:tech:sign": "node scripts/desktop-package.mjs --os macos --variant tech --sign",
     "desktop:package:windows:full:sign": "node scripts/desktop-package.mjs --os windows --variant full --sign",
     "desktop:package:windows:tech:sign": "node scripts/desktop-package.mjs --os windows --variant tech --sign",
-    "desktop:package": "node scripts/desktop-package.mjs"
+    "desktop:package": "node scripts/desktop-package.mjs",
+    "platform:up": "docker compose -f deploy/docker-compose.yml up -d",
+    "platform:down": "docker compose -f deploy/docker-compose.yml down",
+    "platform:db:init": "tsx scripts/platform-db-init.ts",
+    "platform:api": "tsx scripts/platform-api-server.ts",
+    "platform:ingest": "tsx scripts/platform-ingest-worker.ts",
+    "platform:ingest:once": "tsx scripts/platform-ingest-worker.ts --once"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
@@ -61,6 +67,7 @@
     "@types/maplibre-gl": "^1.13.2",
     "@types/marked": "^5.0.2",
     "@types/papaparse": "^5.5.2",
+    "@types/pg": "^8.20.0",
     "@types/topojson-client": "^3.1.5",
     "@types/topojson-specification": "^1.0.5",
     "cross-env": "^10.1.0",
@@ -73,6 +80,7 @@
     "vite-plugin-pwa": "^1.2.0"
   },
   "dependencies": {
+    "@aws-sdk/client-s3": "^3.1062.0",
     "@deck.gl/aggregation-layers": "^9.2.6",
     "@deck.gl/core": "^9.2.6",
     "@deck.gl/geo-layers": "^9.2.6",
@@ -95,6 +103,7 @@
     "marked": "^17.0.3",
     "onnxruntime-web": "^1.23.2",
     "papaparse": "^5.5.3",
+    "pg": "^8.21.0",
     "telegram": "^2.26.22",
     "topojson-client": "^3.1.0",
     "ws": "^8.19.0",
