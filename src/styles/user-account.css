@@ -1,0 +1,310 @@
+.wm-user-account {
+  position: relative;
+  flex-shrink: 0;
+}
+
+.wm-user-login-btn,
+.wm-user-menu-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  font-size: 11px;
+  color: var(--wm-topbar-text, var(--text));
+  background: var(--wm-topbar-control-bg, rgba(255, 255, 255, 0.06));
+  border: 0.5px solid var(--wm-topbar-control-border, rgba(255, 255, 255, 0.12));
+  border-radius: 6px;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.wm-user-login-btn:hover,
+.wm-user-menu-btn:hover {
+  color: var(--green);
+  border-color: var(--green);
+}
+
+.wm-user-menu-wrap {
+  position: relative;
+}
+
+.wm-user-avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: rgba(74, 222, 128, 0.15);
+  color: var(--green);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.wm-user-label {
+  max-width: 140px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.wm-user-chevron {
+  opacity: 0.7;
+}
+
+.wm-user-dropdown {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  min-width: 160px;
+  padding: 4px;
+  background: var(--bg-secondary, #111);
+  border: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+  z-index: 1200;
+}
+
+.wm-user-dropdown-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+  font-size: 12px;
+  color: var(--text);
+  background: transparent;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wm-user-dropdown-item:hover {
+  background: rgba(74, 222, 128, 0.08);
+  color: var(--green);
+}
+
+.wm-user-dropdown-danger:hover {
+  color: #f87171;
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.wm-user-modal-overlay {
+  z-index: 1300;
+}
+
+.wm-user-modal {
+  width: min(520px, calc(100vw - 32px));
+  max-height: min(80vh, 640px);
+  display: flex;
+  flex-direction: column;
+}
+
+.wm-user-profile-modal {
+  width: min(720px, calc(100vw - 32px));
+}
+
+.wm-user-modal-body {
+  padding: 16px 20px;
+  overflow-y: auto;
+}
+
+.wm-user-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 20px 16px;
+  border-top: 0.5px solid var(--border, rgba(255, 255, 255, 0.08));
+}
+
+.wm-user-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  font-size: 12px;
+}
+
+.wm-user-field input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg, #0a0a0a);
+  color: var(--text);
+}
+
+.wm-user-error {
+  margin: 0;
+  font-size: 12px;
+  color: #f87171;
+}
+
+.wm-user-success {
+  margin: 0;
+  font-size: 12px;
+  color: var(--green);
+}
+
+.wm-user-auth-links {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 12px;
+}
+
+.wm-user-link-btn {
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--green);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.wm-user-link-btn:hover {
+  text-decoration: underline;
+}
+
+.wm-user-link-sep {
+  color: var(--text-muted, rgba(255, 255, 255, 0.35));
+}
+
+.wm-user-code-row {
+  display: flex;
+  gap: 8px;
+}
+
+.wm-user-code-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.wm-user-code-row .wm-user-btn-secondary {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.wm-user-field-row .wm-user-code-row input {
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg, #0a0a0a);
+  color: var(--text);
+}
+
+.wm-user-btn-primary,
+.wm-user-btn-secondary {
+  padding: 7px 14px;
+  font-size: 12px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.wm-user-btn-primary {
+  color: #000;
+  background: var(--green);
+  border: none;
+}
+
+.wm-user-btn-secondary {
+  color: var(--text);
+  background: transparent;
+  border: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+}
+
+.wm-user-field input[readonly] {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.wm-user-field select {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+  background: var(--bg, #0a0a0a);
+  color: var(--text);
+  font-size: 12px;
+}
+
+.wm-user-profile-modal .wm-user-modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 12px 16px;
+  border-top: 0.5px solid var(--border, rgba(255, 255, 255, 0.12));
+}
+
+.wm-user-profile-section h3 {
+  margin: 0 0 10px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.wm-user-dl {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+}
+
+.wm-user-dl > div {
+  display: grid;
+  grid-template-columns: 100px 1fr;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.wm-user-dl dt {
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.wm-user-dl dd {
+  margin: 0;
+}
+
+.wm-user-table-wrap {
+  overflow-x: auto;
+}
+
+.wm-user-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.wm-user-table th,
+.wm-user-table td {
+  padding: 8px 10px;
+  border-bottom: 0.5px solid var(--border, rgba(255, 255, 255, 0.08));
+  text-align: left;
+  vertical-align: top;
+}
+
+.wm-user-table th {
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+  font-weight: 500;
+}
+
+.wm-user-muted {
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.wm-user-badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 10px;
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--green);
+}
+
+.wm-user-badge.off {
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}
+
+.wm-user-profile-loading {
+  font-size: 12px;
+  color: var(--text-muted, rgba(255, 255, 255, 0.55));
+}

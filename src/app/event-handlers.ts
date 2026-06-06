@@ -46,6 +46,7 @@ import { invokeTauri } from '@/services/tauri-bridge';
 import { dataFreshness } from '@/services/data-freshness';
 import { mlWorker } from '@/services/ml-worker';
 import { UnifiedSettings } from '@/components/UnifiedSettings';
+import { UserAccountMenu } from '@/components/UserAccountMenu';
 import { t, changeLanguage } from '@/services/i18n';
 import { TvModeController } from '@/services/tv-mode';
 
@@ -500,6 +501,13 @@ export class EventHandlerManager implements AppModule {
     const mount = document.getElementById('unifiedSettingsMount');
     if (mount) {
       mount.appendChild(this.ctx.unifiedSettings.getButton());
+    }
+  }
+
+  setupUserAccount(): void {
+    const mount = document.getElementById('userAccountMount');
+    if (mount) {
+      this.ctx.userAccountMenu = new UserAccountMenu(mount);
     }
   }
 

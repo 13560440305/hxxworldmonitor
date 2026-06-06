@@ -1,0 +1,962 @@
+import './styles/platform-admin.css';
+import { escapeHtml } from '@/utils/sanitize';
+import {
+  clearStoredAdminToken,
+  createUser,
+  deletePreset,
+  deleteSubscription,
+  loginAdmin,
+  fetchAdminMeta,
+  fetchAdminStats,
+  fetchLogIndex,
+  fetchLogTail,
+  fetchPresets,
+  fetchSubscriptions,
+  fetchUsers,
+  fetchWorkspaceSettings,
+  getStoredAdminToken,
+  isPlatformAdminAvailable,
+  resetUserPassword,
+  runDeliverAll,
+  runMatchAll,
+  runSubscriptionDeliver,
+  runSubscriptionMatch,
+  saveDefaultUserPassword,
+  savePreset,
+  saveSubscription,
+  setStoredAdminToken,
+  updateUser,
+  type AdminMeta,
+  type AdminStats,
+  type LogFileInfo,
+  type LogTailResult,
+  type PresetRow,
+  type SubscriptionRules,
+  type SubscriptionRow,
+  type UserRow,
+  type WorkspaceSettings,
+} from '@/services/platform-admin-api';
+
+type Section = 'overview' | 'presets' | 'users' | 'subscriptions' | 'jobs' | 'logs' | 'settings';
+
+let section: Section = 'overview';
+let stats: AdminStats | null = null;
+let meta: AdminMeta | null = null;
+let presets: PresetRow[] = [];
+let users: UserRow[] = [];
+let subscriptions: SubscriptionRow[] = [];
+let logFiles: LogFileInfo[] = [];
+let logServices: string[] = [];
+let logTail: LogTailResult | null = null;
+let logService = 'platform-api';
+let logDate = '';
+let workspaceSettings: WorkspaceSettings | null = null;
+let includeDeletedUsers = false;
+let loginError = '';
+let loginLoading = false;
+let toast = '';
+let toastErr = false;
+let sectionLoading = false;
+let jobRunning: 'match' | 'deliver' | null = null;
+let reloadGeneration = 0;
+
+const app = document.getElementById('app')!;
+
+function showToast(msg: string, isErr = false): void {
+  toast = msg;
+  toastErr = isErr;
+  render();
+  setTimeout(() => {
+    toast = '';
+    render();
+  }, 4000);
+}
+
+function rulesSummary(rules: SubscriptionRules): string {
+  const parts: string[] = [];
+  if (rules.mode === 'daily_brief') parts.push('AI简报');
+  else parts.push('关键词');
+  if (rules.variant) parts.push(rules.variant);
+  const delivery = rules.deliveryLang ?? rules.lang;
+  if (delivery) parts.push(`订阅:${formatLangOption(delivery)}`);
+  if (rules.contentLangs?.length) parts.push(`源:${rules.contentLangs.map(formatLangOption).join('+')}`);
+  else if (rules.lang && rules.deliveryLang && rules.lang !== rules.deliveryLang) {
+    parts.push(`源:${formatLangOption(rules.lang)}`);
+  }
+  if (rules.categories?.length) parts.push(`分类:${rules.categories.join(',')}`);
+  if (rules.keywords?.length) parts.push(`词:${rules.keywords.slice(0, 3).join(',')}`);
+  return parts.join(' · ') || '—';
+}
+
+const FALLBACK_LANG_LABELS: Record<string, string> = {
+  zh: '中文',
+  en: 'English',
+  jp: '日本語',
+  kor: '한국어',
+  fra: 'Français',
+  de: 'Deutsch',
+  spa: 'Español',
+};
+
+function langDisplayName(code: string): string | null {
+  const key = code.trim().toLowerCase();
+  return meta?.langLabels?.[key] ?? meta?.langLabels?.[code] ?? FALLBACK_LANG_LABELS[key] ?? null;
+}
+
+function formatLangOption(code: string): string {
+  const name = langDisplayName(code);
+  return name ? `${name} (${code})` : code;
+}
+
+function defaultRules(): SubscriptionRules {
+  return {
+    mode: 'keyword',
+    variant: 'full',
+    deliveryLang: 'zh',
+    contentLangs: ['en', 'zh'],
+    hours: 24,
+    keywords: [],
+  };
+}
+
+async function reloadSection(): Promise<void> {
+  const gen = ++reloadGeneration;
+  sectionLoading = true;
+  render();
+  try {
+    if (section === 'overview') {
+      stats = await fetchAdminStats();
+    } else if (section === 'presets') {
+      presets = await fetchPresets();
+    } else if (section === 'users') {
+      users = await fetchUsers(includeDeletedUsers);
+    } else if (section === 'subscriptions') {
+      [subscriptions, presets, users] = await Promise.all([
+        fetchSubscriptions(),
+        fetchPresets(),
+        fetchUsers(),
+      ]);
+    } else if (section === 'logs') {
+      const index = await fetchLogIndex();
+      logFiles = index.files;
+      logServices = index.services.length ? index.services : ['platform-api'];
+      if (!logService || !logServices.includes(logService)) {
+        logService = logServices[0] ?? 'platform-api';
+      }
+      if (!logDate) {
+        const latest = logFiles.find((f) => f.service === logService);
+        logDate = latest?.date ?? new Date().toISOString().slice(0, 10);
+      }
+      logTail = await fetchLogTail(logService, 300, logDate);
+    } else if (section === 'settings') {
+      workspaceSettings = await fetchWorkspaceSettings();
+    }
+    if (!meta) meta = await fetchAdminMeta();
+  } catch (err) {
+    if (gen === reloadGeneration) showToast(String(err), true);
+  } finally {
+    if (gen === reloadGeneration) {
+      sectionLoading = false;
+      render();
+    }
+  }
+}
+
+function renderLogin(): void {
+  app.innerHTML = `
+    <div class="pa-login">
+      <h1>Platform 管理后台</h1>
+      <p>使用管理员账号登录（每个工作区仅一名管理员）</p>
+      ${!isPlatformAdminAvailable() ? '<p class="pa-status err">请配置 VITE_PLATFORM_API_URL 并启动 platform:api</p>' : ''}
+      ${loginError ? `<p class="pa-status err">${escapeHtml(loginError)}</p>` : ''}
+      <div class="pa-field">
+        <label>管理员邮箱</label>
+        <input id="adminEmailInput" type="email" placeholder="admin@example.com" autocomplete="username" />
+      </div>
+      <div class="pa-field">
+        <label>密码</label>
+        <input id="adminPasswordInput" type="password" placeholder="密码" autocomplete="current-password" />
+      </div>
+      <button class="pa-btn pa-btn-primary" id="adminLoginBtn" style="width:100%" ${loginLoading ? 'disabled' : ''}>
+        ${loginLoading ? '登录中…' : '登录'}
+      </button>
+      <p class="pa-muted" style="margin-top:12px">首次使用请运行 <code>npm run platform:admin:init</code> 创建管理员</p>
+    </div>`;
+
+  const submitLogin = () => {
+    if (loginLoading) return;
+    const email = (document.getElementById('adminEmailInput') as HTMLInputElement).value.trim();
+    const password = (document.getElementById('adminPasswordInput') as HTMLInputElement).value;
+    if (!email || !password) {
+      loginError = '请输入邮箱和密码';
+      renderLogin();
+      return;
+    }
+    loginError = '';
+    loginLoading = true;
+    renderLogin();
+    void loginAdmin(email, password)
+      .then(() => reloadSection())
+      .then(() => {
+        loginLoading = false;
+        render();
+      })
+      .catch((err) => {
+        loginLoading = false;
+        loginError = String(err);
+        clearStoredAdminToken();
+        renderLogin();
+      });
+  };
+
+  document.getElementById('adminLoginBtn')?.addEventListener('click', submitLogin);
+  document.getElementById('adminPasswordInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitLogin();
+  });
+  document.getElementById('adminEmailInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') submitLogin();
+  });
+}
+
+function navBtn(id: Section, label: string): string {
+  return `<button class="pa-nav-btn${section === id ? ' active' : ''}" data-section="${id}">${label}</button>`;
+}
+
+function renderShell(content: string): void {
+  app.innerHTML = `
+    <div class="pa-shell">
+      <aside class="pa-sidebar">
+        <div class="pa-brand">World Monitor<small>Platform Admin</small></div>
+        <nav class="pa-nav">
+          ${navBtn('overview', '概览')}
+          ${navBtn('presets', '可订阅项')}
+          ${navBtn('users', '订阅用户')}
+          ${navBtn('subscriptions', '订阅规则')}
+          ${navBtn('jobs', '匹配与发信')}
+          ${navBtn('logs', '系统日志')}
+          ${navBtn('settings', '系统设置')}
+        </nav>
+        <div class="pa-sidebar-foot">
+          <button class="pa-btn pa-btn-sm" id="logoutBtn" style="width:100%">退出登录</button>
+        </div>
+      </aside>
+      <main class="pa-main">
+        <header class="pa-header">
+          <h1>${escapeHtml(sectionTitle(section))}</h1>
+          <button class="pa-btn pa-btn-sm" id="refreshBtn" ${sectionLoading ? 'disabled' : ''}>${sectionLoading ? '加载中…' : '刷新'}</button>
+        </header>
+        <div class="pa-content${sectionLoading ? ' is-loading' : ''}">
+          ${sectionLoading ? '<div class="pa-loading-bar" aria-hidden="true"></div>' : ''}
+          ${toast ? `<div class="pa-status ${toastErr ? 'err' : 'ok'}">${escapeHtml(toast)}</div>` : ''}
+          ${sectionLoading ? '<p class="pa-muted pa-loading-hint">加载中…</p>' : content}
+        </div>
+      </main>
+    </div>`;
+
+  app.querySelectorAll('[data-section]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (sectionLoading) return;
+      const next = (el as HTMLElement).dataset.section as Section;
+      if (next === section) {
+        void reloadSection();
+        return;
+      }
+      section = next;
+      void reloadSection();
+    });
+  });
+  document.getElementById('logoutBtn')?.addEventListener('click', () => {
+    clearStoredAdminToken();
+    loginError = '';
+    renderLogin();
+  });
+  document.getElementById('refreshBtn')?.addEventListener('click', () => { void reloadSection(); });
+  bindSectionEvents();
+}
+
+function sectionTitle(s: Section): string {
+  const map: Record<Section, string> = {
+    overview: '概览',
+    presets: '可订阅项（预设目录）',
+    users: '订阅用户',
+    subscriptions: '订阅规则',
+    jobs: '匹配与发信',
+    logs: '系统日志',
+    settings: '系统设置',
+  };
+  return map[s];
+}
+
+function renderOverview(): string {
+  if (!stats) return '<p class="pa-muted">加载中…</p>';
+  return `
+    <div class="pa-cards">
+      <div class="pa-card"><div class="pa-card-label">新闻条目</div><div class="pa-card-value">${stats.newsItems}</div></div>
+      <div class="pa-card"><div class="pa-card-label">用户</div><div class="pa-card-value">${stats.users}</div></div>
+      <div class="pa-card"><div class="pa-card-label">订阅</div><div class="pa-card-value">${stats.subscriptions}</div></div>
+      <div class="pa-card"><div class="pa-card-label">可订阅项</div><div class="pa-card-value">${stats.presetsEnabled}/${stats.presets}</div></div>
+    </div>
+    <p>HXXBOT：${stats.hxxbot.configured ? '已配置' : '未配置（无法发邮件）'}</p>
+    <p class="pa-muted">API：${escapeHtml(stats.hxxbot.apiBaseUrl ?? '—')}</p>
+    ${stats.logging ? `<p class="pa-muted">日志目录：${escapeHtml(stats.logging.logDir)}（级别 ${escapeHtml(stats.logging.level)}）</p>` : ''}`;
+}
+
+function renderPresetsTable(): string {
+  if (!presets.length) return '<p class="pa-muted">暂无预设，请点击「新建可订阅项」</p>';
+  const rows = presets.map((p) => `
+    <tr>
+      <td><strong>${escapeHtml(p.title)}</strong><br><span class="pa-muted">${escapeHtml(p.slug)}</span></td>
+      <td>${escapeHtml(p.description ?? '—')}</td>
+      <td><span class="pa-badge${p.enabled ? '' : ' off'}">${p.enabled ? '启用' : '停用'}</span></td>
+      <td class="pa-muted">${escapeHtml(rulesSummary(p.rules_json))}</td>
+      <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-edit-preset="${p.id}">编辑</button>
+        <button class="pa-btn pa-btn-sm pa-btn-danger" data-del-preset="${p.id}">删除</button>
+      </td>
+    </tr>`).join('');
+  return `<div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+    <th>名称</th><th>说明</th><th>状态</th><th>规则</th><th>操作</th>
+  </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function toDatetimeLocalValue(iso: string | null): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function userStatusBadge(u: UserRow): string {
+  const eff = u.effective_status;
+  const cls = eff === 'active' ? '' : eff === 'disabled' ? ' warn' : ' off';
+  const labels: Record<UserRow['effective_status'], string> = {
+    active: '正常',
+    disabled: '禁用',
+    deleted: '已删除',
+  };
+  let text = labels[eff];
+  if (u.disable_summary && eff === 'disabled') text += `（${u.disable_summary}）`;
+  return `<span class="pa-badge${cls}">${escapeHtml(text)}</span>`;
+}
+
+function renderUsersTable(): string {
+  const rows = users.map((u) => `
+    <tr>
+      <td class="pa-muted pa-mono-sm" title="${escapeHtml(u.id)}">${escapeHtml(u.id.slice(0, 8))}…</td>
+      <td>${escapeHtml(u.email)}</td>
+      <td>${escapeHtml(u.display_name ?? '—')}</td>
+      <td>${escapeHtml(formatLangOption(u.preferred_lang ?? 'zh'))}</td>
+      <td>${userStatusBadge(u)}</td>
+      <td class="pa-muted">${new Date(u.created_at).toLocaleString()}</td>
+      <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-edit-user="${u.id}">编辑</button>
+        ${u.effective_status !== 'deleted' ? `<button class="pa-btn pa-btn-sm" data-reset-pwd="${u.id}" data-user-email="${escapeHtml(u.email)}">重置密码</button>` : ''}
+      </td>
+    </tr>`).join('');
+  return `<div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>状态</th><th>注册时间</th><th>操作</th>
+  </tr></thead><tbody>${rows || '<tr><td colspan="7" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
+}
+
+function renderSettingsPanel(): string {
+  const s = workspaceSettings;
+  if (!s) return '<p class="pa-muted">加载中…</p>';
+  const status = s.hasDefaultPassword
+    ? `已配置${s.defaultPasswordUpdatedAt ? `（更新于 ${new Date(s.defaultPasswordUpdatedAt).toLocaleString()}）` : ''}`
+    : '<span class="pa-status err" style="display:inline;padding:2px 8px">未配置</span>';
+  const legacyHint = s.hasDefaultPassword && !s.defaultUserPassword
+    ? '<p class="pa-muted">当前密码为旧版仅存哈希记录，请重新输入并保存一次以在此显示。</p>'
+    : '';
+  const pwdValue = s.defaultUserPassword ? escapeHtml(s.defaultUserPassword) : '';
+  return `
+    <div class="pa-settings-panel">
+      <h2 class="pa-settings-heading">订阅用户默认密码</h2>
+      <p class="pa-muted">后台添加的订阅用户将自动使用此密码。登录校验仍使用不可逆哈希；此处保存加密副本供管理员查看。</p>
+      <p>当前状态：${status}</p>
+      ${legacyHint}
+      <div class="pa-field" style="max-width:360px">
+        <label>设置 / 更新默认密码</label>
+        <input type="text" id="defaultUserPassword" autocomplete="off" minlength="8" placeholder="至少 8 位" value="${pwdValue}" />
+      </div>
+      <button class="pa-btn pa-btn-primary" id="saveDefaultPwdBtn">保存默认密码</button>
+    </div>`;
+}
+
+function deliveryLangOptions(selected = 'zh'): string {
+  const langs = meta?.deliveryLangs ?? ['zh', 'en', 'jp', 'kor', 'fra', 'de', 'spa'];
+  return langs.map((l) =>
+    `<option value="${escapeHtml(l)}"${l === selected ? ' selected' : ''}>${escapeHtml(formatLangOption(l))}</option>`,
+  ).join('');
+}
+
+function renderSubscriptionsTable(): string {
+  const rows = subscriptions.map((s) => `
+    <tr>
+      <td>${escapeHtml(s.name)}</td>
+      <td>${escapeHtml(s.user_email)}</td>
+      <td class="pa-muted">${escapeHtml(s.preset_title ?? '自定义')}</td>
+      <td class="pa-muted">${escapeHtml(rulesSummary(s.rules_json))}</td>
+      <td><span class="pa-badge${s.enabled ? '' : ' off'}">${s.enabled ? '启用' : '停用'}</span></td>
+      <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-edit-sub="${s.id}">编辑</button>
+        <button class="pa-btn pa-btn-sm" data-match-sub="${s.id}">匹配</button>
+        <button class="pa-btn pa-btn-sm" data-deliver-sub="${s.id}">发信</button>
+        <button class="pa-btn pa-btn-sm pa-btn-danger" data-del-sub="${s.id}">删除</button>
+      </td>
+    </tr>`).join('');
+  return `<div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+    <th>名称</th><th>用户</th><th>预设</th><th>规则</th><th>状态</th><th>操作</th>
+  </tr></thead><tbody>${rows || '<tr><td colspan="6" class="pa-muted">暂无订阅</td></tr>'}</tbody></table></div>`;
+}
+
+function renderLogsPanel(): string {
+  const serviceOpts = logServices.map((s) =>
+    `<option value="${escapeHtml(s)}"${s === logService ? ' selected' : ''}>${escapeHtml(s)}</option>`,
+  ).join('');
+  const datesForService = [...new Set(logFiles.filter((f) => f.service === logService).map((f) => f.date))]
+    .sort((a, b) => b.localeCompare(a));
+  const dateOpts = datesForService.map((d) =>
+    `<option value="${escapeHtml(d)}"${d === logDate ? ' selected' : ''}>${escapeHtml(d)}</option>`,
+  ).join('');
+  const lines = logTail?.lines ?? [];
+  const body = lines.length
+    ? lines.map((l) => escapeHtml(l)).join('\n')
+    : '（该日期暂无日志，请先运行对应 Platform 服务）';
+  return `
+    <p class="pa-muted">日志文件位于项目 <code>logs/{服务名}/{日期}.log</code>，同时输出到控制台。</p>
+    <div class="pa-toolbar pa-log-toolbar">
+      <label class="pa-inline-field">服务
+        <select id="logServiceSelect">${serviceOpts}</select>
+      </label>
+      <label class="pa-inline-field">日期
+        <select id="logDateSelect">${dateOpts || `<option value="${escapeHtml(logDate)}">${escapeHtml(logDate)}</option>`}</select>
+      </label>
+      <button class="pa-btn pa-btn-sm" id="reloadLogsBtn">刷新</button>
+    </div>
+    ${logTail?.truncated ? '<p class="pa-muted">仅显示最近 300 行</p>' : ''}
+    <pre class="pa-log-view" id="logView">${body}</pre>`;
+}
+
+function sectionContent(): string {
+  switch (section) {
+    case 'overview':
+      return renderOverview();
+    case 'presets':
+      return `<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newPresetBtn">新建可订阅项</button></div>${renderPresetsTable()}`;
+    case 'users':
+      return `<div class="pa-toolbar">
+        <button class="pa-btn pa-btn-primary" id="newUserBtn">添加用户</button>
+        <label class="pa-inline-check"><input type="checkbox" id="includeDeletedUsers" ${includeDeletedUsers ? 'checked' : ''} /> 显示已删除</label>
+      </div>${renderUsersTable()}`;
+    case 'subscriptions':
+      return `<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newSubBtn">新建订阅</button></div>${renderSubscriptionsTable()}`;
+    case 'jobs':
+      return `
+        <p class="pa-muted">先运行「全量匹配」写入待推送条目，再「全量发信」（需 HXXBOT 已配置）。任务可能耗时数分钟，请耐心等待。</p>
+        <div class="pa-toolbar">
+          <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '匹配中…' : '全量匹配'}</button>
+          <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '发信中…' : '全量发信'}</button>
+        </div>`;
+    case 'logs':
+      return renderLogsPanel();
+    case 'settings':
+      return renderSettingsPanel();
+    default:
+      return '';
+  }
+}
+
+function render(): void {
+  if (!getStoredAdminToken()) {
+    renderLogin();
+    return;
+  }
+  renderShell(sectionContent());
+}
+
+function modalHeader(title: string): string {
+  return `<div class="pa-modal-header">
+    <h2>${escapeHtml(title)}</h2>
+    <button type="button" class="pa-modal-close" data-modal-close aria-label="关闭">&times;</button>
+  </div>`;
+}
+
+function modalActions(saveLabel = '保存'): string {
+  return `<button class="pa-btn" data-cancel>取消</button>
+    <button class="pa-btn pa-btn-primary" data-save>${escapeHtml(saveLabel)}</button>`;
+}
+
+function modalShell(title: string, body: string, actions = modalActions()): string {
+  return `${modalHeader(title)}
+    <div class="pa-modal-body">${body}</div>
+    <div class="pa-modal-actions">${actions}</div>`;
+}
+
+function bindModalActions(root: HTMLElement, onSave: () => void): void {
+  root.querySelector('[data-cancel]')?.addEventListener('click', () => root.closest('.pa-modal-backdrop')?.remove());
+  root.querySelector('[data-modal-close]')?.addEventListener('click', () => root.closest('.pa-modal-backdrop')?.remove());
+  root.querySelector('[data-save]')?.addEventListener('click', onSave);
+}
+
+function openModal(html: string, onMount: (root: HTMLElement) => void): void {
+  const backdrop = document.createElement('div');
+  backdrop.className = 'pa-modal-backdrop';
+  backdrop.innerHTML = `<div class="pa-modal">${html}</div>`;
+  backdrop.addEventListener('click', (e) => {
+    if (e.target === backdrop) backdrop.remove();
+  });
+  document.body.appendChild(backdrop);
+  backdrop.querySelector('[data-modal-close]')?.addEventListener('click', () => backdrop.remove());
+  onMount(backdrop.querySelector('.pa-modal')!);
+}
+
+function bindSectionEvents(): void {
+  document.getElementById('newPresetBtn')?.addEventListener('click', () => openPresetModal());
+  document.getElementById('newUserBtn')?.addEventListener('click', () => openUserModal());
+  document.getElementById('newSubBtn')?.addEventListener('click', () => openSubModal());
+  document.getElementById('matchAllBtn')?.addEventListener('click', () => {
+    if (jobRunning) return;
+    jobRunning = 'match';
+    render();
+    void runMatchAll()
+      .then((r) => showToast(`匹配完成: ${JSON.stringify(r)}`))
+      .catch((e) => showToast(String(e), true))
+      .finally(() => { jobRunning = null; render(); });
+  });
+  document.getElementById('deliverAllBtn')?.addEventListener('click', () => {
+    if (jobRunning) return;
+    jobRunning = 'deliver';
+    render();
+    void runDeliverAll()
+      .then((r) => showToast(`发信完成: ${JSON.stringify(r)}`))
+      .catch((e) => showToast(String(e), true))
+      .finally(() => { jobRunning = null; render(); });
+  });
+
+  document.getElementById('logServiceSelect')?.addEventListener('change', (e) => {
+    logService = (e.target as HTMLSelectElement).value;
+    const latest = logFiles.find((f) => f.service === logService);
+    logDate = latest?.date ?? new Date().toISOString().slice(0, 10);
+    void reloadSection();
+  });
+  document.getElementById('logDateSelect')?.addEventListener('change', (e) => {
+    logDate = (e.target as HTMLSelectElement).value;
+    void reloadSection();
+  });
+  document.getElementById('reloadLogsBtn')?.addEventListener('click', () => { void reloadSection(); });
+  document.getElementById('saveDefaultPwdBtn')?.addEventListener('click', () => {
+    const pwd = (document.getElementById('defaultUserPassword') as HTMLInputElement | null)?.value ?? '';
+    if (pwd.length < 8) {
+      showToast('默认密码至少 8 位', true);
+      return;
+    }
+    void saveDefaultUserPassword(pwd)
+      .then((s) => { workspaceSettings = s; return reloadSection(); })
+      .then(() => showToast('默认密码已保存'))
+      .catch((e) => showToast(String(e), true));
+  });
+  document.getElementById('includeDeletedUsers')?.addEventListener('change', (e) => {
+    includeDeletedUsers = (e.target as HTMLInputElement).checked;
+    void reloadSection();
+  });
+  app.querySelectorAll('[data-edit-user]').forEach((el) => {
+    el.addEventListener('click', () => {
+      openEditUserModal((el as HTMLElement).dataset.editUser!);
+    });
+  });
+  app.querySelectorAll('[data-reset-pwd]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.resetPwd!;
+      const email = (el as HTMLElement).dataset.userEmail ?? '';
+      openResetPasswordModal(id, email);
+    });
+  });
+  const logView = document.getElementById('logView');
+  if (logView) logView.scrollTop = logView.scrollHeight;
+
+  app.querySelectorAll('[data-edit-preset]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.editPreset!;
+      const p = presets.find((x) => x.id === id);
+      if (p) openPresetModal(p);
+    });
+  });
+  app.querySelectorAll('[data-del-preset]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.delPreset!;
+      if (!confirm('确定删除该可订阅项？')) return;
+      void deletePreset(id).then(() => reloadSection()).then(() => showToast('已删除'));
+    });
+  });
+  app.querySelectorAll('[data-edit-sub]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.editSub!;
+      const s = subscriptions.find((x) => x.id === id);
+      if (s) openSubModal(s);
+    });
+  });
+  app.querySelectorAll('[data-del-sub]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.delSub!;
+      if (!confirm('确定删除该订阅？')) return;
+      void deleteSubscription(id).then(() => reloadSection()).then(() => showToast('已删除'));
+    });
+  });
+  app.querySelectorAll('[data-match-sub]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.matchSub!;
+      void runSubscriptionMatch(id).then((r) => showToast(`匹配: ${JSON.stringify(r)}`)).catch((e) => showToast(String(e), true));
+    });
+  });
+  app.querySelectorAll('[data-deliver-sub]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.deliverSub!;
+      void runSubscriptionDeliver(id).then((r) => showToast(`发信: ${JSON.stringify(r)}`)).catch((e) => showToast(String(e), true));
+    });
+  });
+}
+
+function rulesFormFields(rules: SubscriptionRules, prefix: string): string {
+  const cats = meta?.categories ?? [];
+  const deliveryLangs = meta?.deliveryLangs ?? ['zh', 'en', 'jp', 'kor', 'fra', 'de', 'spa'];
+  const ingestLangs = meta?.langs?.length ? meta.langs : ['en', 'zh'];
+  const catChips = cats.map((c) => {
+    const on = rules.categories?.includes(c.id) ? ' on' : '';
+    return `<span class="pa-chip${on}" data-cat="${escapeHtml(c.id)}">${escapeHtml(c.id)} (${c.count})</span>`;
+  }).join('');
+  const delivery = rules.deliveryLang ?? rules.lang ?? 'zh';
+  const contentSelected = rules.contentLangs?.length
+    ? rules.contentLangs
+    : (rules.lang ? [rules.lang] : []);
+  const contentChips = ingestLangs.map((l) => {
+    const on = contentSelected.includes(l) ? ' on' : '';
+    return `<span class="pa-chip${on}" data-content-lang="${escapeHtml(l)}">${escapeHtml(formatLangOption(l))}</span>`;
+  }).join('');
+
+  return `
+    <div class="pa-field">
+      <label>模式</label>
+      <select id="${prefix}mode">
+        <option value="keyword" ${rules.mode !== 'daily_brief' ? 'selected' : ''}>关键词/分类匹配</option>
+        <option value="daily_brief" ${rules.mode === 'daily_brief' ? 'selected' : ''}>每日 AI 简报</option>
+      </select>
+    </div>
+    <div class="pa-grid-2">
+      <div class="pa-field"><label>variant</label>
+        <select id="${prefix}variant">${(meta?.variants ?? ['full']).map((v) =>
+          `<option value="${v}" ${rules.variant === v ? 'selected' : ''}>${v}</option>`).join('')}
+        </select></div>
+      <div class="pa-field"><label>订阅语言（邮件内容）</label>
+        <select id="${prefix}deliveryLang">${deliveryLangs.map((l) =>
+          `<option value="${l}" ${delivery === l ? 'selected' : ''}>${escapeHtml(formatLangOption(l))}</option>`).join('')}
+        </select></div>
+    </div>
+    <div class="pa-field"><label>数据源语言（点击选择，不选=全部；入库时 RSS 已标记 lang）</label>
+      <div class="pa-chips" id="${prefix}contentLangChips">${contentChips || '<span class="pa-muted">暂无</span>'}</div>
+    </div>
+    <div class="pa-field"><label>关键词（逗号分隔）</label>
+      <input id="${prefix}keywords" value="${escapeHtml((rules.keywords ?? []).join(', '))}" /></div>
+    <div class="pa-field"><label>分类（点击选择）</label><div class="pa-chips" id="${prefix}catChips">${catChips || '<span class="pa-muted">暂无分类数据</span>'}</div></div>
+    <div class="pa-grid-2">
+      <div class="pa-field"><label>回溯小时</label><input id="${prefix}hours" type="number" value="${rules.hours ?? 24}" /></div>
+      <div class="pa-field"><label>排序</label><input id="${prefix}sort" type="number" value="0" /></div>
+    </div>
+    <div class="pa-field"><label><input type="checkbox" id="${prefix}aiBrief" ${rules.includeAiBrief ? 'checked' : ''} /> 邮件附带 AI 简报</label></div>
+    <p class="pa-muted">若订阅语言与新闻源语言不一致，发信前将自动翻译并缓存到 OSS（按分类目录）与数据库。</p>`;
+}
+
+function wireCatChips(prefix: string): void {
+  document.querySelectorAll(`#${prefix}catChips .pa-chip`).forEach((el) => {
+    el.addEventListener('click', () => el.classList.toggle('on'));
+  });
+  document.querySelectorAll(`#${prefix}contentLangChips .pa-chip`).forEach((el) => {
+    el.addEventListener('click', () => el.classList.toggle('on'));
+  });
+}
+
+function readRulesFromForm(prefix: string): SubscriptionRules {
+  const selectedCats: string[] = [];
+  document.querySelectorAll(`#${prefix}catChips .pa-chip.on`).forEach((el) => {
+    const c = (el as HTMLElement).dataset.cat;
+    if (c) selectedCats.push(c);
+  });
+  const contentLangs: string[] = [];
+  document.querySelectorAll(`#${prefix}contentLangChips .pa-chip.on`).forEach((el) => {
+    const l = (el as HTMLElement).dataset.contentLang;
+    if (l) contentLangs.push(l);
+  });
+  const kw = (document.getElementById(`${prefix}keywords`) as HTMLInputElement).value;
+  return {
+    mode: (document.getElementById(`${prefix}mode`) as HTMLSelectElement).value as SubscriptionRules['mode'],
+    variant: (document.getElementById(`${prefix}variant`) as HTMLSelectElement).value,
+    deliveryLang: (document.getElementById(`${prefix}deliveryLang`) as HTMLSelectElement).value,
+    contentLangs: contentLangs.length ? contentLangs : undefined,
+    keywords: kw.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
+    categories: selectedCats.length ? selectedCats : undefined,
+    hours: Number((document.getElementById(`${prefix}hours`) as HTMLInputElement).value) || 24,
+    includeAiBrief: (document.getElementById(`${prefix}aiBrief`) as HTMLInputElement).checked,
+  };
+}
+
+function openPresetModal(existing?: PresetRow): void {
+  const rules = existing?.rules_json ?? defaultRules();
+  const prefix = 'pf_';
+  const title = existing ? '编辑可订阅项' : '新建可订阅项';
+  openModal(modalShell(title, `
+    <div class="pa-field"><label>标题 *</label><input id="pf_title" value="${escapeHtml(existing?.title ?? '')}" /></div>
+    <div class="pa-field"><label>slug</label><input id="pf_slug" value="${escapeHtml(existing?.slug ?? '')}" placeholder="留空自动生成" /></div>
+    <div class="pa-field"><label>说明</label><textarea id="pf_desc">${escapeHtml(existing?.description ?? '')}</textarea></div>
+    <div class="pa-field"><label><input type="checkbox" id="pf_enabled" ${existing?.enabled !== false ? 'checked' : ''} /> 启用</label></div>
+    <details open><summary class="pa-muted" style="cursor:pointer;margin-bottom:12px">默认规则</summary>
+      ${rulesFormFields(rules, prefix)}
+    </details>`), (root) => {
+    wireCatChips(prefix);
+    const sortEl = document.getElementById(`${prefix}sort`) as HTMLInputElement;
+    if (sortEl && existing) sortEl.value = String(existing.sort_order);
+
+    bindModalActions(root, () => {
+      const titleVal = (document.getElementById('pf_title') as HTMLInputElement).value.trim();
+      if (!titleVal) return;
+      void savePreset({
+        title: titleVal,
+        slug: (document.getElementById('pf_slug') as HTMLInputElement).value.trim() || undefined,
+        description: (document.getElementById('pf_desc') as HTMLTextAreaElement).value,
+        rules_json: readRulesFromForm(prefix),
+        enabled: (document.getElementById('pf_enabled') as HTMLInputElement).checked,
+        sort_order: Number(sortEl?.value) || 0,
+      }, existing?.id)
+        .then(() => { root.closest('.pa-modal-backdrop')?.remove(); return reloadSection(); })
+        .then(() => showToast('已保存'))
+        .catch((e) => showToast(String(e), true));
+    });
+  });
+}
+
+function openUserModal(): void {
+  void (async () => {
+    if (!meta) meta = await fetchAdminMeta();
+    openModal(modalShell('添加订阅用户', `
+      <div class="pa-field"><label>邮箱 *</label><input id="u_email" type="email" autocomplete="email" /></div>
+      <div class="pa-field"><label>显示名</label><input id="u_name" autocomplete="name" /></div>
+      <div class="pa-field"><label>订阅语言（默认）</label>
+        <select id="u_preferred_lang">${deliveryLangOptions('zh')}</select>
+      </div>
+      <p class="pa-muted">新建用户将使用「系统设置」中的默认密码。若未配置默认密码，请先到系统设置中保存。</p>`, modalActions('添加')), (root) => {
+      bindModalActions(root, () => {
+        const email = (document.getElementById('u_email') as HTMLInputElement).value.trim();
+        if (!email) return;
+        const preferredLang = (document.getElementById('u_preferred_lang') as HTMLSelectElement).value;
+        void createUser(
+          email,
+          (document.getElementById('u_name') as HTMLInputElement).value.trim() || undefined,
+          preferredLang,
+        )
+          .then(() => { root.closest('.pa-modal-backdrop')?.remove(); return reloadSection(); })
+          .then(() => showToast('用户已添加'))
+          .catch((e) => showToast(String(e), true));
+      });
+    });
+  })();
+}
+
+function openEditUserModal(userId: string): void {
+  const user = users.find((u) => u.id === userId);
+  if (!user) return;
+
+  void (async () => {
+    if (!meta) meta = await fetchAdminMeta();
+    const statusVal = user.account_status;
+    const disablePermanent = user.disable_permanent
+      || (user.account_status === 'disabled' && !user.disabled_until);
+    const disabledUntilLocal = toDatetimeLocalValue(user.disabled_until);
+
+    openModal(modalShell(`编辑用户 — ${escapeHtml(user.email)}`, `
+      <div class="pa-field"><label>用户 ID</label>
+        <input id="eu_id" readonly value="${escapeHtml(user.id)}" /></div>
+      <div class="pa-field"><label>邮箱</label>
+        <input id="eu_email" readonly value="${escapeHtml(user.email)}" /></div>
+      <div class="pa-field"><label>显示名</label>
+        <input id="eu_name" autocomplete="name" value="${escapeHtml(user.display_name ?? '')}" /></div>
+      <div class="pa-field"><label>订阅语言</label>
+        <select id="eu_preferred_lang">${deliveryLangOptions(user.preferred_lang ?? 'zh')}</select>
+      </div>
+      <div class="pa-field"><label>账号状态</label>
+        <select id="eu_status">
+          <option value="active" ${statusVal === 'active' ? 'selected' : ''}>正常</option>
+          <option value="disabled" ${statusVal === 'disabled' ? 'selected' : ''}>禁用</option>
+          <option value="deleted" ${statusVal === 'deleted' ? 'selected' : ''}>已删除（逻辑删除）</option>
+        </select>
+      </div>
+      <div id="eu_disable_opts" class="pa-disable-panel" hidden>
+        <label class="pa-muted" style="display:block;margin-bottom:8px">禁用方式</label>
+        <label class="pa-radio-label">
+          <input type="radio" name="eu_disableMode" value="permanent" ${disablePermanent ? 'checked' : ''} /> 永久禁用
+        </label>
+        <label class="pa-radio-label">
+          <input type="radio" name="eu_disableMode" value="until" ${!disablePermanent ? 'checked' : ''} /> 禁用至指定时间
+        </label>
+        <input type="datetime-local" id="eu_disabled_until" value="${disabledUntilLocal}" />
+      </div>
+      ${user.effective_status === 'deleted' ? '<p class="pa-muted">该账号已逻辑删除。将状态改回「正常」可恢复登录与推送。</p>' : ''}
+      <p class="pa-muted">邮箱与用户 ID 不可修改。删除为逻辑删除，不会物理移除数据。</p>`), (root) => {
+      const statusSel = root.querySelector('#eu_status') as HTMLSelectElement;
+      const disableOpts = root.querySelector('#eu_disable_opts') as HTMLElement;
+      const untilInput = root.querySelector('#eu_disabled_until') as HTMLInputElement;
+
+      function syncDisableOpts(): void {
+        const show = statusSel.value === 'disabled';
+        disableOpts.hidden = !show;
+        const mode = (root.querySelector('input[name="eu_disableMode"]:checked') as HTMLInputElement)?.value;
+        untilInput.disabled = mode !== 'until';
+      }
+
+      statusSel.addEventListener('change', () => {
+        if (statusSel.value === 'disabled') {
+          const permanent = root.querySelector('input[name="eu_disableMode"][value="permanent"]') as HTMLInputElement;
+          if (permanent && !root.querySelector('input[name="eu_disableMode"]:checked')) {
+            permanent.checked = true;
+          }
+        }
+        syncDisableOpts();
+      });
+      root.querySelectorAll('input[name="eu_disableMode"]').forEach((el) => {
+        el.addEventListener('change', syncDisableOpts);
+      });
+      syncDisableOpts();
+
+      bindModalActions(root, () => {
+        const accountStatus = statusSel.value as UserRow['account_status'];
+        if (accountStatus === 'deleted' && user.effective_status !== 'deleted') {
+          if (!confirm('确定逻辑删除该用户？删除后无法登录，邮件推送将跳过。')) return;
+        }
+
+        const payload: Parameters<typeof updateUser>[1] = {
+          displayName: (root.querySelector('#eu_name') as HTMLInputElement).value.trim() || null,
+          preferredLang: (root.querySelector('#eu_preferred_lang') as HTMLSelectElement).value,
+          accountStatus,
+        };
+
+        if (accountStatus === 'disabled') {
+          const mode = (root.querySelector('input[name="eu_disableMode"]:checked') as HTMLInputElement).value;
+          if (mode === 'permanent') {
+            payload.disablePermanent = true;
+          } else {
+            const raw = untilInput.value;
+            if (!raw) {
+              showToast('请设置禁用结束时间', true);
+              return;
+            }
+            const until = new Date(raw);
+            if (Number.isNaN(until.getTime()) || until.getTime() <= Date.now()) {
+              showToast('禁用结束时间须晚于当前时间', true);
+              return;
+            }
+            payload.disablePermanent = false;
+            payload.disabledUntil = until.toISOString();
+          }
+        }
+
+        void updateUser(userId, payload)
+          .then(() => { root.closest('.pa-modal-backdrop')?.remove(); return reloadSection(); })
+          .then(() => showToast('用户已更新'))
+          .catch((e) => showToast(String(e), true));
+      });
+    });
+  })();
+}
+
+function openResetPasswordModal(userId: string, email: string): void {
+  openModal(modalShell(`重置密码 — ${escapeHtml(email)}`, `
+    <div class="pa-field">
+      <label class="pa-radio-label">
+        <input type="radio" name="pwdMode" value="default" checked />
+        重置为系统默认密码
+      </label>
+    </div>
+    <div class="pa-field">
+      <label class="pa-radio-label">
+        <input type="radio" name="pwdMode" value="custom" />
+        指定新密码
+      </label>
+      <input type="password" id="resetCustomPwd" autocomplete="new-password" minlength="8" placeholder="至少 8 位" disabled />
+    </div>
+    <p class="pa-muted">默认密码在「系统设置」中配置；修改默认密码不会自动更新已有用户，需在此单独重置。</p>`,
+  modalActions('确认重置')), (root) => {
+    const customInput = root.querySelector('#resetCustomPwd') as HTMLInputElement;
+    root.querySelectorAll('input[name="pwdMode"]').forEach((el) => {
+      el.addEventListener('change', () => {
+        const mode = (root.querySelector('input[name="pwdMode"]:checked') as HTMLInputElement).value;
+        customInput.disabled = mode !== 'custom';
+        if (mode !== 'custom') customInput.value = '';
+      });
+    });
+    bindModalActions(root, () => {
+      const mode = (root.querySelector('input[name="pwdMode"]:checked') as HTMLInputElement).value;
+      const run = mode === 'default'
+        ? resetUserPassword(userId, { useDefault: true })
+        : (() => {
+          const pwd = customInput.value;
+          if (pwd.length < 8) {
+            showToast('新密码至少 8 位', true);
+            return Promise.reject(new Error('skip'));
+          }
+          return resetUserPassword(userId, { password: pwd });
+        })();
+      void run
+        .then(() => { root.closest('.pa-modal-backdrop')?.remove(); })
+        .then(() => showToast('密码已重置'))
+        .catch((e) => { if (String(e) !== 'Error: skip') showToast(String(e), true); });
+    });
+  });
+}
+
+function openSubModal(existing?: SubscriptionRow): void {
+  const rules = existing?.rules_json ?? defaultRules();
+  const prefix = 'sf_';
+  const presetOpts = presets.map((p) =>
+    `<option value="${p.id}" ${existing?.preset_id === p.id ? 'selected' : ''}>${escapeHtml(p.title)}</option>`).join('');
+  const userOpts = users.map((u) =>
+    `<option value="${u.id}" ${existing?.user_id === u.id ? 'selected' : ''}>${escapeHtml(u.email)}</option>`).join('');
+
+  openModal(modalShell(existing ? '编辑订阅' : '新建订阅', `
+    <div class="pa-field"><label>订阅名称 *</label><input id="sf_name" value="${escapeHtml(existing?.name ?? '')}" /></div>
+    ${existing ? '' : `<div class="pa-field"><label>用户邮箱（新用户自动创建）</label><input id="sf_email" type="email" placeholder="或下方选择已有用户" /></div>`}
+    <div class="pa-field"><label>已有用户</label>
+      <select id="sf_userId"><option value="">—</option>${userOpts}</select></div>
+    <div class="pa-field"><label>基于可订阅项（可选）</label>
+      <select id="sf_presetId"><option value="">自定义规则</option>${presetOpts}</select></div>
+    <div class="pa-field"><label><input type="checkbox" id="sf_enabled" ${existing?.enabled !== false ? 'checked' : ''} /> 启用</label></div>
+    <details open><summary class="pa-muted" style="cursor:pointer;margin-bottom:12px">规则详情（可覆盖预设）</summary>
+      ${rulesFormFields(rules, prefix)}
+    </details>`), (root) => {
+    wireCatChips(prefix);
+    const userSelect = document.getElementById('sf_userId') as HTMLSelectElement | null;
+    const deliverySelect = document.getElementById(`${prefix}deliveryLang`) as HTMLSelectElement | null;
+    userSelect?.addEventListener('change', () => {
+      const u = users.find((x) => x.id === userSelect.value);
+      if (u?.preferred_lang && deliverySelect) deliverySelect.value = u.preferred_lang;
+    });
+    bindModalActions(root, () => {
+      const name = (document.getElementById('sf_name') as HTMLInputElement).value.trim();
+      if (!name) return;
+      const presetId = (document.getElementById('sf_presetId') as HTMLSelectElement).value || undefined;
+      void saveSubscription({
+        name,
+        email: existing ? undefined : (document.getElementById('sf_email') as HTMLInputElement | null)?.value.trim() || undefined,
+        userId: existing?.user_id ?? ((document.getElementById('sf_userId') as HTMLSelectElement).value || undefined),
+        presetId,
+        rulesJson: readRulesFromForm(prefix),
+        enabled: (document.getElementById('sf_enabled') as HTMLInputElement).checked,
+      }, existing?.id)
+        .then(() => { root.closest('.pa-modal-backdrop')?.remove(); return reloadSection(); })
+        .then(() => showToast('订阅已保存'))
+        .catch((e) => showToast(String(e), true));
+    });
+  });
+}
+
+void (async () => {
+  render();
+  if (getStoredAdminToken()) await reloadSection();
+})();

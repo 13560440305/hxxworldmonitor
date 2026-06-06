@@ -58,21 +58,26 @@ GRANT ALL ON SCHEMA public TO postgres;
 
 （若使用非 `postgres` 用户，将 `GRANT` 中的用户名改为实际用户。）
 
-### 步骤 4：初始化表结构
+### 步骤 4：数据库结构（自动迁移）
+
+**推荐**：只创建空库（步骤 3），启动 `platform:api` 时会**自动执行迁移**（`PLATFORM_DB_AUTO_MIGRATE` 默认开启）。
 
 ```powershell
-npm run platform:db:init
+npm run platform:api
 ```
+
+日志中会出现 `database bootstrap complete`；新版本 SQL 会在启动时按 `schema_migrations` 表增量应用。
+
+手动迁移（可选，与启动时逻辑相同）：
+
+```powershell
+npm run platform:db:migrate
+# 或首次全量：npm run platform:db:init
+```
+
+关闭自动迁移：`.env.local` 设置 `PLATFORM_DB_AUTO_MIGRATE=false`
 
 若未安装 **pgvector**，会输出警告并跳过向量表，**Phase 1 可正常使用**。见下方 [可选：安装 pgvector](#可选安装-pgvectorwindows)。
-
-成功时大致输出：
-
-```
-[platform-db-init] connected
-[platform-db-init] core schema applied
-[platform-db-init] done
-```
 
 ### 步骤 5：采集新闻（首次）
 
@@ -102,7 +107,8 @@ npm run dev
 
 | 命令 | 说明 |
 |------|------|
-| `npm run platform:db:init` | 初始化 schema（首次或升级后） |
+| `npm run platform:db:init` | 初始化 schema（首次） |
+| `npm run platform:db:migrate` | 增量迁移（pgvector + Phase 2 索引，可重复执行） |
 | `npm run platform:ingest:once` | 采集一轮 RSS |
 | `npm run platform:ingest` | 定时采集（10 分钟） |
 | `npm run platform:api` | REST API (:8787) |
@@ -213,3 +219,145 @@ npm run preview
 | GET | `/platform/v1/aggregate/by-category` |
 | POST | `/platform/v1/ingest/run` |
 | POST | `/platform/v1/cold-tier/run`（需 OSS） |
+
+### Phase 1 — AI Brief & 邮件订阅
+
+前置：`.env.local` 配置 `HXXBOT_SITE_URL` + `HXXBOT_API_KEY`
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/platform/v1/briefs/generate` | 生成 AI 简报写入 `briefs` |
+| GET | `/platform/v1/briefs/latest` | 最新简报 |
+| POST | `/platform/v1/briefs/email` | 生成并邮件发送简报 |
+| POST | `/platform/v1/users` | 注册用户（email） |
+| GET | `/platform/v1/users?email=` | 查询用户 |
+| POST | `/platform/v1/subscriptions` | 创建订阅 |
+| GET | `/platform/v1/subscriptions` | 订阅列表 |
+| POST | `/platform/v1/subscriptions/{id}/match` | 匹配新闻 |
+| POST | `/platform/v1/subscriptions/{id}/deliver` | 发送订阅邮件 |
+| POST | `/platform/v1/subscriptions/deliver-all` | 全部启用订阅发信 |
+
+订阅 worker：`npm run platform:subscription:once`（匹配 + 发信）
+
+### 管理后台
+
+1. 迁移：`npm run platform:db:migrate`（含用户角色 `admin` / `user`）
+2. `.env.local` 配置管理员账号：
+   ```env
+   PLATFORM_ADMIN_EMAIL=admin@localhost
+   PLATFORM_ADMIN_PASSWORD=你的强密码
+   PLATFORM_JWT_SECRET=随机长字符串
+   ```
+3. 创建管理员（每个工作区仅一名）：`npm run platform:admin:init`
+4. 启动：`npm run platform:api` 与 `npm run dev`
+5. 浏览器打开：**http://localhost:3000/admin**，使用上述邮箱密码登录
+
+重置管理员密码：`npm run platform:admin:init -- --reset-password`（需已存在管理员）
+
+角色说明：`users.role` 仅两种 — **`admin`**（唯一，可登录后台）与 **`user`**（订阅用户，无密码）。
+
+Admin API（登录后 Header `Authorization: Bearer {session_token}`）：
+
+| 方法 | 路径 |
+|------|------|
+| POST | `/platform/v1/admin/login`（公开，body: `{ email, password }`） |
+| GET | `/platform/v1/admin/stats` |
+| GET | `/platform/v1/admin/meta` |
+| GET/POST/PATCH/DELETE | `/platform/v1/admin/presets` |
+| GET/POST | `/platform/v1/admin/users` |
+| GET/POST/PATCH/DELETE | `/platform/v1/admin/subscriptions` |
+| POST | `/platform/v1/admin/run/match-all` |
+| POST | `/platform/v1/admin/run/deliver-all` |
+| GET | `/platform/v1/admin/logs`（日志索引或 tail，`?service=&date=&lines=`） |
+| GET | `/platform/v1/catalog`（公开，启用中的预设） |
+
+### 文件日志
+
+Platform 各进程将日志写入 **`logs/{服务名}/{YYYY-MM-DD}.log`**（项目根目录，可通过 `PLATFORM_LOG_DIR` 修改）：
+
+| 服务名 | 进程 |
+|--------|------|
+| `platform-api` | `npm run platform:api` |
+| `platform-ingest` | `npm run platform:ingest` / `platform:ingest:once` |
+| `platform-embed` | `npm run platform:embed` / `platform:embed:once` |
+| `platform-subscription` | `npm run platform:subscription` / `:once` |
+| `platform-db-migrate` | `npm run platform:db:migrate` |
+
+环境变量（`.env.local`）：
+
+```env
+# PLATFORM_LOG_DIR=logs          # 绝对或相对项目根
+# PLATFORM_LOG_LEVEL=info      # debug | info | warn | error
+# PLATFORM_LOG_TO_FILE=true
+# PLATFORM_LOG_TO_CONSOLE=true
+```
+
+管理后台「系统日志」页可在线查看最近 300 行；排查错误时也可直接打开日志文件。
+
+创建每日 AI 简报订阅示例：
+
+```json
+{
+  "email": "you@example.com",
+  "name": "每日世界简报",
+  "rulesJson": {
+    "mode": "daily_brief",
+    "variant": "full",
+    "lang": "zh"
+  }
+}
+```
+
+关键词订阅示例（含订阅语言与数据源语言）：
+
+```json
+{
+  "email": "you@example.com",
+  "name": "乌克兰局势",
+  "rulesJson": {
+    "keywords": ["ukraine", "乌克兰"],
+    "categories": ["conflict"],
+    "variant": "full",
+    "contentLangs": ["en"],
+    "deliveryLang": "zh",
+    "hours": 24
+  }
+}
+```
+
+当 `deliveryLang` 与新闻 `lang` 不一致时，发信前调用 HXXBOT 翻译，结果写入 `content_translations` 表；若 OSS 已配置则归档到 `translations/{category}/{targetLang}/news_item/{id}.json.gz`。发信优先级：数据库内联标题 → OSS 文件 → 临时翻译并回写。
+
+旧版 `lang` 字段仍兼容（同时作为内容过滤与订阅语言）。
+
+### Phase 2 — AI Research API
+
+前置：`npm run platform:db:migrate` → `npm run platform:embed:once`（需 pgvector + 新闻已入库）
+
+| 方法 | 路径 |
+|------|------|
+| POST | `/platform/v1/embedding/run` | 生成向量（body 可选 `{"batchSize":32}`） |
+| GET | `/platform/v1/research/monitors` | 监控配置列表 |
+| POST | `/platform/v1/research/monitors` | 创建监控（body 见下） |
+| GET | `/platform/v1/research/monitors/{id}/report` | 语义检索报告 |
+| POST | `/platform/v1/research/search` | 语义搜索（body: `{"query":"..."}`） |
+| POST | `/platform/v1/research/entities/compare` | 实体声量对比 |
+
+创建监控示例：
+
+```json
+{
+  "monitorType": "competitor",
+  "name": "OpenAI",
+  "configJson": {
+    "watchTerms": ["OpenAI", "ChatGPT"],
+    "variant": "tech",
+    "lang": "en"
+  }
+}
+```
+
+Phase 2 终端（可选第四个）：
+
+```powershell
+npm run platform:embed
+```

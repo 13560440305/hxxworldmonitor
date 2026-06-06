@@ -13,6 +13,7 @@ import type { CountryTimeline } from '@/components/CountryTimeline';
 import type { PlaybackControl } from '@/components';
 import type { ExportPanel } from '@/utils';
 import type { UnifiedSettings } from '@/components/UnifiedSettings';
+import type { UserAccountMenu } from '@/components/UserAccountMenu';
 import type { MobileWarningModal, PizzIntIndicator } from '@/components';
 import type { ParsedMapUrlState } from '@/utils';
 import type { PositiveNewsFeedPanel } from '@/components/PositiveNewsFeedPanel';
@@ -102,6 +103,7 @@ export interface AppContext {
   playbackControl: PlaybackControl | null;
   exportPanel: ExportPanel | null;
   unifiedSettings: UnifiedSettings | null;
+  userAccountMenu: UserAccountMenu | null;
   mobileWarningModal: MobileWarningModal | null;
   pizzintIndicator: PizzIntIndicator | null;
   countryBriefPage: CountryBriefPage | null;

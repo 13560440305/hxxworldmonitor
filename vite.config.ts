@@ -29,6 +29,29 @@ const platformApiProxyTarget = getPlatformApiProxyTarget();
 const brotliCompressAsync = promisify(brotliCompress);
 const BROTLI_EXTENSIONS = new Set(['.js', '.mjs', '.css', '.html', '.svg', '.json', '.txt', '.xml', '.wasm']);
 
+/** Serve admin.html at /admin (dev + preview). */
+function adminRoutePlugin(): Plugin {
+  const rewrite = (req: { url?: string }, _res: unknown, next: () => void) => {
+    if (!req.url) return next();
+    const q = req.url.indexOf('?');
+    const pathname = q >= 0 ? req.url.slice(0, q) : req.url;
+    const search = q >= 0 ? req.url.slice(q) : '';
+    if (pathname === '/admin' || pathname === '/admin/') {
+      req.url = `/admin.html${search}`;
+    }
+    next();
+  };
+  return {
+    name: 'admin-route',
+    configureServer(server) {
+      server.middlewares.use(rewrite);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(rewrite);
+    },
+  };
+}
+
 function brotliPrecompressPlugin(): Plugin {
   return {
     name: 'brotli-precompress',
@@ -690,6 +713,7 @@ export default defineConfig({
     __APP_VERSION__: JSON.stringify(pkg.version),
   },
   plugins: [
+    adminRoutePlugin(),
     htmlVariantPlugin(),
     polymarketPlugin(),
     rssProxyPlugin(),
@@ -852,6 +876,7 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         settings: resolve(__dirname, 'settings.html'),
         liveChannels: resolve(__dirname, 'live-channels.html'),
+        admin: resolve(__dirname, 'admin.html'),
       },
       output: {
         manualChunks(id) {

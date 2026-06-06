@@ -23,9 +23,15 @@ CREATE TABLE users (
   email         TEXT NOT NULL,
   password_hash TEXT,
   display_name  TEXT,
+  role          TEXT NOT NULL DEFAULT 'user' CHECK (role IN ('admin', 'user')),
+  preferred_lang TEXT NOT NULL DEFAULT 'zh',
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE (workspace_id, email)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_users_one_admin_per_workspace
+  ON users (workspace_id)
+  WHERE role = 'admin';
 
 -- ---------------------------------------------------------------------------
 -- News ingest (Phase 1)
