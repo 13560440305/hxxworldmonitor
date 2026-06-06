@@ -1,6 +1,6 @@
 import {
   buildTranslationObjectKey,
-  isOssEnabled,
+  isStorageEnabled,
   parseTranslationObjectBuffer,
   downloadObject,
   uploadTranslationObject,
@@ -89,7 +89,7 @@ async function translateAndPersist(
   let checksum: string | null = null;
   let byteSize: number | null = null;
 
-  if (isOssEnabled()) {
+  if (isStorageEnabled()) {
     try {
       objectKey = buildTranslationObjectKey(
         item.category ?? 'uncategorized',

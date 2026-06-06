@@ -1,5 +1,5 @@
 import { getDefaultWorkspaceId, query } from '../_shared/db.js';
-import { buildColdObjectKey, isOssEnabled, uploadColdObject } from '../_shared/blob-store.js';
+import { buildColdObjectKey, isStorageEnabled, uploadColdObject } from '../_shared/blob-store.js';
 import { gzipSync } from 'node:zlib';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -13,9 +13,9 @@ export interface ColdTierResult {
   errors: number;
 }
 
-/** Move old news body metadata to OSS index (Phase 0: archive title+link JSON blob). */
+/** Move old news body metadata to cold storage (Phase 0: archive title+link JSON blob). */
 export async function runColdTierPass(): Promise<ColdTierResult> {
-  if (!isOssEnabled()) {
+  if (!isStorageEnabled()) {
     return { archived: 0, skipped: 0, errors: 0 };
   }
 

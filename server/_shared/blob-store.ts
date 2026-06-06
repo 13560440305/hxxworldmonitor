@@ -1,8 +1,16 @@
 import { createHash } from 'node:crypto';
+import { access, mkdir, readFile, writeFile } from 'node:fs/promises';
+import path from 'node:path';
 import { gunzipSync, gzipSync } from 'node:zlib';
 import { GetObjectCommand, HeadBucketCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
-
-declare const process: { env: Record<string, string | undefined> };
+import {
+  getLocalStorageConfig,
+  getResolvedS3Backend,
+  getStoragePublicStatus,
+  getStorageType,
+  isStorageConfigured,
+  type ResolvedS3Backend,
+} from './storage-config.js';
 
 export interface ColdUploadResult {
   objectKey: string;
@@ -10,72 +18,154 @@ export interface ColdUploadResult {
   checksum: string;
 }
 
-function getOssConfig() {
-  return {
-    endpoint: process.env.OSS_ENDPOINT?.replace(/\/$/, '') ?? '',
-    accessKey: process.env.OSS_ACCESS_KEY ?? '',
-    secretKey: process.env.OSS_SECRET_KEY ?? '',
-    bucket: process.env.OSS_BUCKET ?? 'wm-cold',
-    region: process.env.OSS_REGION ?? 'us-east-1',
-    forcePathStyle: process.env.OSS_FORCE_PATH_STYLE !== 'false',
-  };
-}
-
 let s3Client: S3Client | null = null;
+let s3ClientKey = '';
 
-function getS3Client(): S3Client {
-  const cfg = getOssConfig();
-  if (!s3Client) {
+function getS3Client(backend: ResolvedS3Backend): S3Client {
+  const key = `${backend.kind}|${backend.endpoint}|${backend.bucket}|${backend.accessKeyId}`;
+  if (!s3Client || s3ClientKey !== key) {
     s3Client = new S3Client({
-      endpoint: cfg.endpoint,
-      region: cfg.region,
+      endpoint: backend.endpoint,
+      region: backend.region,
       credentials: {
-        accessKeyId: cfg.accessKey,
-        secretAccessKey: cfg.secretKey,
+        accessKeyId: backend.accessKeyId,
+        secretAccessKey: backend.secretAccessKey,
       },
-      forcePathStyle: cfg.forcePathStyle,
+      forcePathStyle: backend.forcePathStyle,
     });
+    s3ClientKey = key;
   }
   return s3Client;
 }
 
-export function isOssEnabled(): boolean {
-  const cfg = getOssConfig();
-  return Boolean(cfg.endpoint && cfg.accessKey && cfg.secretKey && cfg.bucket);
+async function readS3Body(body: unknown, objectKey: string): Promise<Buffer> {
+  if (!body) throw new Error(`Empty object body: ${objectKey}`);
+  if (typeof (body as AsyncIterable<Buffer>)[Symbol.asyncIterator] === 'function') {
+    const chunks: Buffer[] = [];
+    for await (const chunk of body as AsyncIterable<Buffer>) {
+      chunks.push(Buffer.from(chunk));
+    }
+    return Buffer.concat(chunks);
+  }
+  if (body instanceof Uint8Array) {
+    return Buffer.from(body);
+  }
+  throw new Error(`Unsupported object body type for ${objectKey}`);
 }
+
+function localFilePath(objectKey: string): string {
+  const local = getLocalStorageConfig();
+  if (!local) throw new Error('Local storage is not configured');
+  const normalizedKey = objectKey.replace(/^\/+/, '');
+  const filePath = path.resolve(local.base_path, normalizedKey);
+  const base = path.resolve(local.base_path);
+  if (!filePath.startsWith(base + path.sep) && filePath !== base) {
+    throw new Error(`Invalid object key: ${objectKey}`);
+  }
+  return filePath;
+}
+
+async function uploadLocalObject(
+  objectKey: string,
+  payload: Buffer,
+): Promise<ColdUploadResult> {
+  const filePath = localFilePath(objectKey);
+  await mkdir(path.dirname(filePath), { recursive: true });
+  await writeFile(filePath, payload);
+  const checksum = createHash('sha256').update(payload).digest('hex');
+  return { objectKey, byteSize: payload.byteLength, checksum };
+}
+
+async function downloadLocalObject(objectKey: string): Promise<Buffer> {
+  const filePath = localFilePath(objectKey);
+  return readFile(filePath);
+}
+
+async function uploadS3Object(
+  backend: ResolvedS3Backend,
+  objectKey: string,
+  payload: Buffer,
+  contentType: string,
+  contentEncoding?: string,
+): Promise<ColdUploadResult> {
+  const checksum = createHash('sha256').update(payload).digest('hex');
+  await getS3Client(backend).send(
+    new PutObjectCommand({
+      Bucket: backend.bucket,
+      Key: objectKey,
+      Body: payload,
+      ContentType: contentType,
+      ...(contentEncoding ? { ContentEncoding: contentEncoding } : {}),
+    }),
+  );
+  return { objectKey, byteSize: payload.byteLength, checksum };
+}
+
+async function downloadS3Object(backend: ResolvedS3Backend, objectKey: string): Promise<Buffer> {
+  const resp = await getS3Client(backend).send(
+    new GetObjectCommand({ Bucket: backend.bucket, Key: objectKey }),
+  );
+  return readS3Body(resp.Body, objectKey);
+}
+
+/** @deprecated Use {@link isStorageConfigured}. */
+export function isOssEnabled(): boolean {
+  return isStorageConfigured();
+}
+
+export function isStorageEnabled(): boolean {
+  return isStorageConfigured();
+}
+
+export { getStoragePublicStatus, getStorageType };
 
 export async function uploadColdObject(
   objectKey: string,
   body: Buffer | string,
   contentType = 'application/json',
 ): Promise<ColdUploadResult> {
-  const cfg = getOssConfig();
-  if (!isOssEnabled()) {
-    throw new Error('OSS is not configured (OSS_ENDPOINT, OSS_ACCESS_KEY, OSS_SECRET_KEY, OSS_BUCKET)');
+  if (!isStorageConfigured()) {
+    throw new Error('Storage is not configured (set STORAGE_TYPE in .env.local)');
   }
 
   const payload = typeof body === 'string' ? Buffer.from(body, 'utf8') : body;
-  const checksum = createHash('sha256').update(payload).digest('hex');
+  const local = getLocalStorageConfig();
+  if (local) return uploadLocalObject(objectKey, payload);
 
-  await getS3Client().send(
-    new PutObjectCommand({
-      Bucket: cfg.bucket,
-      Key: objectKey,
-      Body: payload,
-      ContentType: contentType,
-    }),
-  );
-
-  return { objectKey, byteSize: payload.byteLength, checksum };
+  const backend = getResolvedS3Backend();
+  if (!backend) {
+    throw new Error('S3-compatible storage is not configured');
+  }
+  return uploadS3Object(backend, objectKey, payload, contentType);
 }
 
+/** @deprecated Use {@link checkStorageHealth}. */
 export async function checkOssHealth(): Promise<{ ok: boolean; error?: string }> {
-  if (!isOssEnabled()) {
-    return { ok: false, error: 'OSS not configured' };
+  return checkStorageHealth();
+}
+
+export async function checkStorageHealth(): Promise<{ ok: boolean; error?: string }> {
+  if (!isStorageConfigured()) {
+    return { ok: false, error: 'Storage not configured' };
   }
-  const cfg = getOssConfig();
+
+  const local = getLocalStorageConfig();
+  if (local) {
+    try {
+      await mkdir(local.base_path, { recursive: true });
+      await access(local.base_path);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: String(e) };
+    }
+  }
+
+  const backend = getResolvedS3Backend();
+  if (!backend) {
+    return { ok: false, error: 'S3 backend not configured' };
+  }
   try {
-    await getS3Client().send(new HeadBucketCommand({ Bucket: cfg.bucket }));
+    await getS3Client(backend).send(new HeadBucketCommand({ Bucket: backend.bucket }));
     return { ok: true };
   } catch (e) {
     return { ok: false, error: String(e) };
@@ -102,49 +192,35 @@ export function buildTranslationObjectKey(
 }
 
 export async function downloadObject(objectKey: string): Promise<Buffer> {
-  const cfg = getOssConfig();
-  if (!isOssEnabled()) {
-    throw new Error('OSS is not configured');
+  if (!isStorageConfigured()) {
+    throw new Error('Storage is not configured');
   }
-  const resp = await getS3Client().send(
-    new GetObjectCommand({ Bucket: cfg.bucket, Key: objectKey }),
-  );
-  const chunks: Buffer[] = [];
-  const body = resp.Body;
-  if (!body) throw new Error(`Empty OSS object: ${objectKey}`);
-  if (typeof (body as AsyncIterable<Buffer>)[Symbol.asyncIterator] === 'function') {
-    for await (const chunk of body as AsyncIterable<Buffer>) {
-      chunks.push(Buffer.from(chunk));
-    }
-  } else if (body instanceof Uint8Array) {
-    chunks.push(Buffer.from(body));
-  } else {
-    throw new Error(`Unsupported OSS body type for ${objectKey}`);
-  }
-  return Buffer.concat(chunks);
+
+  const local = getLocalStorageConfig();
+  if (local) return downloadLocalObject(objectKey);
+
+  const backend = getResolvedS3Backend();
+  if (!backend) throw new Error('S3-compatible storage is not configured');
+  return downloadS3Object(backend, objectKey);
 }
 
 export async function uploadTranslationObject(
   objectKey: string,
   payload: Record<string, unknown>,
 ): Promise<ColdUploadResult> {
-  if (!isOssEnabled()) {
-    throw new Error('OSS is not configured');
+  if (!isStorageConfigured()) {
+    throw new Error('Storage is not configured');
   }
+
   const json = JSON.stringify(payload);
   const gz = gzipSync(Buffer.from(json, 'utf8'));
-  const checksum = createHash('sha256').update(gz).digest('hex');
-  const cfg = getOssConfig();
-  await getS3Client().send(
-    new PutObjectCommand({
-      Bucket: cfg.bucket,
-      Key: objectKey,
-      Body: gz,
-      ContentType: 'application/json',
-      ContentEncoding: 'gzip',
-    }),
-  );
-  return { objectKey, byteSize: gz.byteLength, checksum };
+
+  const local = getLocalStorageConfig();
+  if (local) return uploadLocalObject(objectKey, gz);
+
+  const backend = getResolvedS3Backend();
+  if (!backend) throw new Error('S3-compatible storage is not configured');
+  return uploadS3Object(backend, objectKey, gz, 'application/json', 'gzip');
 }
 
 export function parseTranslationObjectBuffer(buf: Buffer): Record<string, unknown> {

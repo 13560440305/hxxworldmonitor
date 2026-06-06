@@ -4,7 +4,9 @@ import { t } from '@/services/i18n';
 import {
   fetchAuthStatus,
   fetchCurrentUser,
-  fetchUserSubscriptions,
+  fetchSubscriptionCatalog,
+  subscribeToPreset,
+  unsubscribeFromPreset,
   isUserAuthAvailable,
   loginUser,
   logoutUser,
@@ -14,7 +16,7 @@ import {
   sendPasswordResetCode,
   updateUserProfile,
   type PlatformUserProfile,
-  type UserSubscriptionSummary,
+  type SubscriptionCatalog,
 } from '@/services/platform-user-auth';
 
 type AuthView = 'login' | 'register' | 'forgot';
@@ -488,25 +490,68 @@ export class UserAccountMenu {
       if (e.target === overlay) close();
     });
 
-    let subs: UserSubscriptionSummary[] = [];
+    let catalog: SubscriptionCatalog | null = null;
     try {
-      subs = await fetchUserSubscriptions();
+      catalog = await fetchSubscriptionCatalog();
     } catch {
-      subs = [];
+      catalog = null;
     }
 
     const body = overlay.querySelector('.wm-user-modal-body');
     if (!body || !this.user) return;
 
-    const subRows = subs.length
-      ? subs.map((s) => `
+    this.renderProfileBody(body, catalog);
+
+    const footer = overlay.querySelector('#userProfileFooter') as HTMLElement | null;
+    if (footer) {
+      footer.hidden = false;
+      footer.innerHTML = `
+        <button type="button" class="wm-user-btn-secondary wm-user-modal-close">${escapeHtml(t('account.cancel'))}</button>
+        <button type="button" class="wm-user-btn-primary" id="userProfileSaveBtn">${escapeHtml(t('account.saveProfile'))}</button>`;
+      footer.querySelector('#userProfileSaveBtn')?.addEventListener('click', () => { void this.submitProfileUpdate(); });
+      footer.querySelectorAll('.wm-user-modal-close').forEach((el) => {
+        el.addEventListener('click', () => this.closeProfileModal());
+      });
+    }
+  }
+
+  private renderProfileBody(body: HTMLElement, catalog: SubscriptionCatalog | null): void {
+    if (!this.user) return;
+
+    const limitHint = catalog && catalog.maxSubscriptionsPerUser > 0
+      ? `<p class="wm-user-muted">${escapeHtml(t('account.subscriptionLimitHint', {
+        count: String(catalog.activeSubscriptionCount),
+        max: String(catalog.maxSubscriptionsPerUser),
+      }))}</p>`
+      : '';
+
+    const selfServiceOff = catalog && !catalog.selfServiceEnabled
+      ? `<p class="wm-user-muted">${escapeHtml(t('account.selfServiceDisabled'))}</p>`
+      : '';
+
+    const catalogRows = catalog?.presets.length
+      ? catalog.presets.map((p) => {
+        let action = '';
+        if (p.subscribed && p.subscription_id) {
+          action = catalog.selfServiceEnabled
+            ? `<button type="button" class="wm-user-btn-secondary wm-user-sub-action" data-unsub="${escapeHtml(p.subscription_id)}">${escapeHtml(t('account.unsubscribe'))}</button>`
+            : '';
+        } else if (catalog.selfServiceEnabled) {
+          const disabled = !catalog.canSubscribe ? ' disabled' : '';
+          action = `<button type="button" class="wm-user-btn-primary wm-user-sub-action"${disabled} data-sub-preset="${escapeHtml(p.id)}">${escapeHtml(t('account.subscribe'))}</button>`;
+        }
+        const status = p.subscribed
+          ? `<span class="wm-user-badge">${escapeHtml(t('account.subscribed'))}</span>`
+          : `<span class="wm-user-badge off">${escapeHtml(t('account.notSubscribed'))}</span>`;
+        return `
         <tr>
-          <td>${escapeHtml(s.name)}</td>
-          <td>${escapeHtml(s.preset_title ?? t('account.customRules'))}</td>
-          <td class="wm-user-muted">${escapeHtml(s.rules_summary)}</td>
-          <td><span class="wm-user-badge${s.enabled ? '' : ' off'}">${escapeHtml(s.enabled ? t('account.enabled') : t('account.disabled'))}</span></td>
-        </tr>`).join('')
-      : `<tr><td colspan="4" class="wm-user-muted">${escapeHtml(t('account.noSubscriptions'))}</td></tr>`;
+          <td>${escapeHtml(p.title)}</td>
+          <td class="wm-user-muted">${escapeHtml(p.rules_summary)}</td>
+          <td>${status}</td>
+          <td class="wm-user-sub-action-cell">${action}</td>
+        </tr>`;
+      }).join('')
+      : `<tr><td colspan="4" class="wm-user-muted">${escapeHtml(t('account.noCatalogItems'))}</td></tr>`;
 
     body.innerHTML = `
       <section class="wm-user-profile-section">
@@ -528,31 +573,77 @@ export class UserAccountMenu {
       </section>
       <section class="wm-user-profile-section">
         <h3>${escapeHtml(t('account.mySubscriptions'))}</h3>
+        ${selfServiceOff}
+        ${limitHint}
         <div class="wm-user-table-wrap">
           <table class="wm-user-table">
             <thead>
               <tr>
                 <th>${escapeHtml(t('account.subName'))}</th>
-                <th>${escapeHtml(t('account.subPreset'))}</th>
                 <th>${escapeHtml(t('account.subRules'))}</th>
                 <th>${escapeHtml(t('account.subStatus'))}</th>
+                <th>${escapeHtml(t('account.subAction'))}</th>
               </tr>
             </thead>
-            <tbody>${subRows}</tbody>
+            <tbody id="userCatalogBody">${catalogRows}</tbody>
           </table>
         </div>
       </section>`;
 
-    const footer = overlay.querySelector('#userProfileFooter') as HTMLElement | null;
-    if (footer) {
-      footer.hidden = false;
-      footer.innerHTML = `
-        <button type="button" class="wm-user-btn-secondary wm-user-modal-close">${escapeHtml(t('account.cancel'))}</button>
-        <button type="button" class="wm-user-btn-primary" id="userProfileSaveBtn">${escapeHtml(t('account.saveProfile'))}</button>`;
-      footer.querySelector('#userProfileSaveBtn')?.addEventListener('click', () => { void this.submitProfileUpdate(); });
-      footer.querySelectorAll('.wm-user-modal-close').forEach((el) => {
-        el.addEventListener('click', () => this.closeProfileModal());
+    body.querySelectorAll('[data-sub-preset]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const presetId = (el as HTMLElement).dataset.subPreset!;
+        void this.handleSubscribe(presetId);
       });
+    });
+    body.querySelectorAll('[data-unsub]').forEach((el) => {
+      el.addEventListener('click', () => {
+        const subId = (el as HTMLElement).dataset.unsub!;
+        void this.handleUnsubscribe(subId);
+      });
+    });
+  }
+
+  private async refreshCatalogSection(): Promise<void> {
+    const overlay = this.profileOverlay;
+    if (!overlay || !this.user) return;
+    const body = overlay.querySelector('.wm-user-modal-body') as HTMLElement | null;
+    if (!body) return;
+    const displayName = (body.querySelector('#userProfileDisplayName') as HTMLInputElement | null)?.value;
+    const preferredLang = (body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null)?.value;
+    try {
+      const catalog = await fetchSubscriptionCatalog();
+      this.renderProfileBody(body, catalog);
+      if (displayName !== undefined) {
+        const nameEl = body.querySelector('#userProfileDisplayName') as HTMLInputElement | null;
+        if (nameEl) nameEl.value = displayName;
+      }
+      if (preferredLang) {
+        const langEl = body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null;
+        if (langEl) langEl.value = preferredLang;
+      }
+    } catch (err) {
+      this.showProfileError(mapAuthError(err));
+    }
+  }
+
+  private async handleSubscribe(presetId: string): Promise<void> {
+    try {
+      await subscribeToPreset(presetId);
+      await this.refreshCatalogSection();
+      this.showProfileSuccess(t('account.subscribeSuccess'));
+    } catch (err) {
+      this.showProfileError(mapAuthError(err));
+    }
+  }
+
+  private async handleUnsubscribe(subscriptionId: string): Promise<void> {
+    try {
+      await unsubscribeFromPreset(subscriptionId);
+      await this.refreshCatalogSection();
+      this.showProfileSuccess(t('account.unsubscribeSuccess'));
+    } catch (err) {
+      this.showProfileError(mapAuthError(err));
     }
   }
 

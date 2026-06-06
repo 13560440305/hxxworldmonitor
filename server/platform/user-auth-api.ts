@@ -12,6 +12,12 @@ import {
   resetPasswordWithCode,
   sendPasswordResetCode,
 } from './user-auth-service.js';
+import {
+  SelfServiceSubscriptionError,
+  getUserSubscriptionCatalog,
+  subscribeUserToPreset,
+  unsubscribeUserSubscription,
+} from './user-subscription-service.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -29,10 +35,17 @@ function publicUser(user: Awaited<ReturnType<typeof getUserById>>) {
 
 function authErrorStatus(code: string): number {
   if (code === 'invalid_email_password' || code === 'invalid_or_expired_code') return 401;
-  if (code === 'email_not_found') return 404;
+  if (code === 'email_not_found' || code === 'preset_not_found' || code === 'subscription_not_found') return 404;
   if (code === 'hxxbot_not_configured') return 503;
   if (code === 'send_code_too_soon') return 429;
+  if (code === 'self_service_disabled' || code === 'subscription_limit_reached' || code === 'already_subscribed') {
+    return 403;
+  }
   return 400;
+}
+
+function selfServiceErrorStatus(code: string): number {
+  return authErrorStatus(code);
 }
 
 async function issueUserToken(
@@ -208,6 +221,78 @@ export async function handleUserAuthRoutes(
       return true;
     }
     json(res, 200, { user: publicUser(updated) });
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/auth/catalog') {
+    const user = await getUserById(auth.session.sub);
+    if (!user) {
+      json(res, 401, { error: 'User not found' });
+      return true;
+    }
+    try {
+      await assertSubscriberCanLogin(user);
+      const catalog = await getUserSubscriptionCatalog(auth.session.sub);
+      json(res, 200, catalog);
+    } catch (err) {
+      if (err instanceof SelfServiceSubscriptionError) {
+        json(res, selfServiceErrorStatus(err.code), { error: err.code });
+        return true;
+      }
+      const code = String(err).replace(/^Error:\s*/, '');
+      json(res, code === 'account_disabled' || code === 'account_deleted' ? 403 : 400, { error: code });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && path === '/platform/v1/auth/subscriptions') {
+    let body: { presetId?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    const presetId = body.presetId?.trim();
+    if (!presetId) {
+      json(res, 400, { error: 'preset_id_required' });
+      return true;
+    }
+    try {
+      const user = await getUserById(auth.session.sub);
+      if (!user) {
+        json(res, 401, { error: 'User not found' });
+        return true;
+      }
+      await assertSubscriberCanLogin(user);
+      const subscription = await subscribeUserToPreset(auth.session.sub, presetId);
+      json(res, 201, { subscription });
+    } catch (err) {
+      if (err instanceof SelfServiceSubscriptionError) {
+        json(res, selfServiceErrorStatus(err.code), { error: err.code });
+        return true;
+      }
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  if (req.method === 'DELETE' && /^\/platform\/v1\/auth\/subscriptions\/[^/]+$/.test(path)) {
+    const subscriptionId = path.split('/').pop()!;
+    try {
+      const user = await getUserById(auth.session.sub);
+      if (!user) {
+        json(res, 401, { error: 'User not found' });
+        return true;
+      }
+      await assertSubscriberCanLogin(user);
+      await unsubscribeUserSubscription(auth.session.sub, subscriptionId);
+      json(res, 200, { ok: true });
+    } catch (err) {
+      if (err instanceof SelfServiceSubscriptionError) {
+        json(res, selfServiceErrorStatus(err.code), { error: err.code });
+        return true;
+      }
+      json(res, 400, { error: String(err) });
+    }
     return true;
   }
 

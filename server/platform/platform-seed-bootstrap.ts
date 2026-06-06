@@ -1,0 +1,34 @@
+import { isDatabaseEnabled } from '../_shared/db.js';
+import type { PlatformLogger } from '../_shared/platform-logger.js';
+import { ensureIntegrationProviderSeeds } from './integration-providers-repository.js';
+
+export interface PlatformSeedResult {
+  integrationProvidersInserted: number;
+}
+
+/**
+ * Idempotent seed data after schema migrations.
+ * Inserts missing integration provider rows (base_url defaults + empty api_key).
+ */
+export async function runPlatformSeedBootstrap(opts?: {
+  logger?: PlatformLogger;
+}): Promise<PlatformSeedResult> {
+  const log = opts?.logger;
+  const result: PlatformSeedResult = { integrationProvidersInserted: 0 };
+
+  if (!isDatabaseEnabled()) {
+    return result;
+  }
+
+  try {
+    result.integrationProvidersInserted = await ensureIntegrationProviderSeeds();
+    if (result.integrationProvidersInserted > 0) {
+      log?.info('seeded integration providers', { count: result.integrationProvidersInserted });
+    }
+  } catch (err) {
+    log?.error('platform seed bootstrap failed', err);
+    throw err;
+  }
+
+  return result;
+}

@@ -34,7 +34,7 @@ function adminPrefix(): string {
   return base ? `${base}/platform` : '/platform';
 }
 
-async function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
+async function adminFetch(path: string, init: RequestInit = {}, timeoutMs = ADMIN_FETCH_TIMEOUT_MS): Promise<Response> {
   const token = getStoredAdminToken();
   if (!token) throw new Error('请先登录管理后台');
 
@@ -44,7 +44,7 @@ async function adminFetch(path: string, init: RequestInit = {}): Promise<Respons
     headers.set('Content-Type', 'application/json');
   }
 
-  const timeoutSignal = AbortSignal.timeout(ADMIN_FETCH_TIMEOUT_MS);
+  const timeoutSignal = AbortSignal.timeout(timeoutMs);
   const signal = init.signal
     ? AbortSignal.any([init.signal, timeoutSignal])
     : timeoutSignal;
@@ -143,6 +143,8 @@ export interface WorkspaceSettings {
   hasDefaultPassword: boolean;
   defaultPasswordUpdatedAt: string | null;
   defaultUserPassword: string | null;
+  selfServiceSubscriptionsEnabled: boolean;
+  maxSubscriptionsPerUser: number;
 }
 
 export interface SubscriptionRow {
@@ -247,10 +249,148 @@ export async function fetchWorkspaceSettings(): Promise<WorkspaceSettings> {
 }
 
 export async function saveDefaultUserPassword(password: string): Promise<WorkspaceSettings> {
+  return patchWorkspaceSettings({ defaultUserPassword: password });
+}
+
+export interface IntegrationProviderRow {
+  slug: string;
+  displayName: string;
+  category: string;
+  baseUrl: string;
+  modelName: string | null;
+  enabled: boolean;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  configured: boolean;
+  sortOrder: number;
+  custom: boolean;
+}
+
+export async function fetchIntegrationProviders(): Promise<IntegrationProviderRow[]> {
+  const data = await parseJson<{ providers: IntegrationProviderRow[] }>(
+    await adminFetch('/v1/admin/integrations'),
+  );
+  return data.providers;
+}
+
+export async function fetchAiModels(): Promise<IntegrationProviderRow[]> {
+  const data = await parseJson<{ providers: IntegrationProviderRow[] }>(
+    await adminFetch('/v1/admin/ai-models'),
+  );
+  return data.providers;
+}
+
+export async function saveIntegrationProvider(
+  slug: string,
+  patch: {
+    displayName?: string;
+    category?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    modelName?: string;
+    enabled?: boolean;
+    clearApiKey?: boolean;
+  },
+): Promise<IntegrationProviderRow> {
+  const body: Record<string, unknown> = {};
+  if (patch.displayName !== undefined) body.displayName = patch.displayName;
+  if (patch.category !== undefined) body.category = patch.category;
+  if (patch.baseUrl !== undefined) body.baseUrl = patch.baseUrl;
+  if (patch.apiKey !== undefined) body.apiKey = patch.apiKey;
+  if (patch.modelName !== undefined) body.modelName = patch.modelName;
+  if (patch.enabled !== undefined) body.enabled = patch.enabled;
+  if (patch.clearApiKey) body.clearApiKey = true;
+  const data = await parseJson<{ provider: IntegrationProviderRow }>(
+    await adminFetch(`/v1/admin/integrations/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  );
+  return data.provider;
+}
+
+export async function createIntegrationProvider(input: {
+  slug: string;
+  displayName: string;
+  category: string;
+  baseUrl: string;
+  apiKey?: string;
+  enabled?: boolean;
+}): Promise<IntegrationProviderRow> {
+  const data = await parseJson<{ provider: IntegrationProviderRow }>(
+    await adminFetch('/v1/admin/integrations', {
+      method: 'POST',
+      body: JSON.stringify(input),
+    }),
+  );
+  return data.provider;
+}
+
+export async function deleteIntegrationProvider(slug: string): Promise<void> {
+  await parseJson(await adminFetch(`/v1/admin/integrations/${slug}`, { method: 'DELETE' }));
+}
+
+export async function saveAiModel(
+  slug: string,
+  patch: { baseUrl?: string; apiKey?: string; modelName?: string; enabled?: boolean; clearApiKey?: boolean },
+): Promise<IntegrationProviderRow> {
+  const body: Record<string, unknown> = {};
+  if (patch.baseUrl !== undefined) body.baseUrl = patch.baseUrl;
+  if (patch.apiKey !== undefined) body.apiKey = patch.apiKey;
+  if (patch.modelName !== undefined) body.modelName = patch.modelName;
+  if (patch.enabled !== undefined) body.enabled = patch.enabled;
+  if (patch.clearApiKey) body.clearApiKey = true;
+  const data = await parseJson<{ provider: IntegrationProviderRow }>(
+    await adminFetch(`/v1/admin/ai-models/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  );
+  return data.provider;
+}
+
+export interface AiModelTestResult {
+  ok: boolean;
+  latencyMs: number;
+  model?: string;
+  reply?: string;
+  error?: string;
+  httpStatus?: number;
+}
+
+export async function testAiModel(
+  slug: string,
+  draft: { baseUrl?: string; modelName?: string; apiKey?: string },
+): Promise<AiModelTestResult> {
+  const body: Record<string, unknown> = {};
+  if (draft.baseUrl !== undefined) body.baseUrl = draft.baseUrl;
+  if (draft.modelName !== undefined) body.modelName = draft.modelName;
+  if (draft.apiKey !== undefined) body.apiKey = draft.apiKey;
+  const resp = await adminFetch(
+    `/v1/admin/ai-models/${slug}/test`,
+    { method: 'POST', body: JSON.stringify(body) },
+    200_000,
+  );
+  return await resp.json() as AiModelTestResult;
+}
+
+export async function patchWorkspaceSettings(patch: {
+  defaultUserPassword?: string;
+  selfServiceSubscriptionsEnabled?: boolean;
+  maxSubscriptionsPerUser?: number;
+}): Promise<WorkspaceSettings> {
+  const body: Record<string, unknown> = {};
+  if (patch.defaultUserPassword !== undefined) body.defaultUserPassword = patch.defaultUserPassword;
+  if (patch.selfServiceSubscriptionsEnabled !== undefined) {
+    body.selfServiceSubscriptionsEnabled = patch.selfServiceSubscriptionsEnabled;
+  }
+  if (patch.maxSubscriptionsPerUser !== undefined) {
+    body.maxSubscriptionsPerUser = patch.maxSubscriptionsPerUser;
+  }
   const data = await parseJson<{ settings: WorkspaceSettings }>(
     await adminFetch('/v1/admin/settings', {
       method: 'PATCH',
-      body: JSON.stringify({ defaultUserPassword: password }),
+      body: JSON.stringify(body),
     }),
   );
   return data.settings;

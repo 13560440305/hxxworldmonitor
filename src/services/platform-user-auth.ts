@@ -22,6 +22,24 @@ export interface UserSubscriptionSummary {
   created_at: string;
 }
 
+export interface CatalogPresetRow {
+  id: string;
+  slug: string;
+  title: string;
+  description: string | null;
+  rules_summary: string;
+  subscribed: boolean;
+  subscription_id: string | null;
+}
+
+export interface SubscriptionCatalog {
+  selfServiceEnabled: boolean;
+  maxSubscriptionsPerUser: number;
+  activeSubscriptionCount: number;
+  canSubscribe: boolean;
+  presets: CatalogPresetRow[];
+}
+
 function authPrefix(): string {
   const base = getPlatformApiBaseUrl();
   if (base === null) throw new Error('Platform API not configured');
@@ -122,6 +140,25 @@ export async function fetchUserSubscriptions(): Promise<UserSubscriptionSummary[
   const resp = await userFetch('/v1/auth/subscriptions');
   const data = await parseJson<{ subscriptions: UserSubscriptionSummary[] }>(resp);
   return data.subscriptions;
+}
+
+export async function fetchSubscriptionCatalog(): Promise<SubscriptionCatalog> {
+  return parseJson<SubscriptionCatalog>(await userFetch('/v1/auth/catalog'));
+}
+
+export async function subscribeToPreset(presetId: string): Promise<UserSubscriptionSummary> {
+  const resp = await userFetch('/v1/auth/subscriptions', {
+    method: 'POST',
+    body: JSON.stringify({ presetId }),
+  });
+  const data = await parseJson<{ subscription: UserSubscriptionSummary }>(resp);
+  return data.subscription;
+}
+
+export async function unsubscribeFromPreset(subscriptionId: string): Promise<void> {
+  await parseJson<{ ok: boolean }>(
+    await userFetch(`/v1/auth/subscriptions/${subscriptionId}`, { method: 'DELETE' }),
+  );
 }
 
 export function logoutUser(): void {

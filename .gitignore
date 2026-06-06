@@ -6,6 +6,7 @@ dist/
 logs/
 .env
 .env.local
+uploads/
 .playwright-mcp/
 .vercel
 api/\[domain\]/v1/\[rpc\].js

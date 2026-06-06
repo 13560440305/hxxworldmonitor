@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 import pg from 'pg';
 import type { PlatformLogger } from '../_shared/platform-logger.js';
 import { createPlatformLogger } from '../_shared/platform-logger.js';
+import { runPlatformSeedBootstrap } from './platform-seed-bootstrap.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -21,6 +22,10 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '009_schema_workspace_settings.sql', optional: true },
   { file: '010_schema_workspace_settings_enc.sql', optional: true },
   { file: '011_schema_user_account_status.sql', optional: true },
+  { file: '012_schema_workspace_subscription_policy.sql', optional: true },
+  { file: '013_schema_integration_providers.sql', optional: true },
+  { file: '014_schema_integration_providers_model.sql', optional: true },
+  { file: '015_schema_integration_providers_custom.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {
@@ -129,6 +134,14 @@ async function isMigrationAlreadyApplied(client: pg.Client, filename: string): P
       return columnExists(client, 'workspace_settings', 'default_user_password_enc');
     case '011_schema_user_account_status.sql':
       return columnExists(client, 'users', 'account_status');
+    case '012_schema_workspace_subscription_policy.sql':
+      return columnExists(client, 'workspace_settings', 'self_service_subscriptions_enabled');
+    case '013_schema_integration_providers.sql':
+      return tableExists(client, 'integration_providers');
+    case '014_schema_integration_providers_model.sql':
+      return columnExists(client, 'integration_providers', 'model_name');
+    case '015_schema_integration_providers_custom.sql':
+      return columnExists(client, 'integration_providers', 'is_custom');
     default:
       return false;
   }
@@ -222,6 +235,9 @@ export async function runPlatformDbBootstrap(opts?: {
       unchanged: result.unchanged.length,
       skipped: result.skipped.length,
     });
+
+    await runPlatformSeedBootstrap({ logger: log });
+
     return result;
   } finally {
     await client.end();

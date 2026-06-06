@@ -308,3 +308,16 @@
   font-size: 12px;
   color: var(--text-muted, rgba(255, 255, 255, 0.55));
 }
+
+.wm-user-profile-section + .wm-user-profile-section {
+  margin-top: 20px;
+}
+
+.wm-user-sub-action-cell {
+  white-space: nowrap;
+}
+
+.wm-user-sub-action {
+  padding: 4px 10px;
+  font-size: 11px;
+}

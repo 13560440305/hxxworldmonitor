@@ -41,10 +41,19 @@ import { authenticateAdmin, setSubscriberPassword } from './auth-repository.js';
 import { signSessionToken } from '../_shared/platform-session.js';
 import {
   getWorkspaceSettingsPublic,
+  patchWorkspaceSettings,
   resetSubscriberToDefaultPassword,
   resolveNewSubscriberPasswordHash,
-  setDefaultUserPassword,
 } from './workspace-settings-repository.js';
+import {
+  listIntegrationProvidersPublic,
+  updateIntegrationProvider,
+  createCustomIntegrationProvider,
+  deleteCustomIntegrationProvider,
+} from './integration-providers-repository.js';
+import { isAiProviderSlug } from './integration-provider-catalog.js';
+import { testAiModelConnection } from './ai-model-test-service.js';
+import { refreshHxxbotConfigCache } from '../_shared/hxxbot-config.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -222,19 +231,147 @@ export async function handlePlatformAdminRoutes(
   }
 
   if (req.method === 'PATCH' && path === '/platform/v1/admin/settings') {
-    let body: { defaultUserPassword?: string } = {};
+    let body: {
+      defaultUserPassword?: string;
+      selfServiceSubscriptionsEnabled?: boolean;
+      maxSubscriptionsPerUser?: number;
+    } = {};
     try {
       const raw = await readBody(req);
       if (raw) body = JSON.parse(raw) as typeof body;
     } catch { /* empty */ }
-    if (!body.defaultUserPassword) {
-      json(res, 400, { error: 'defaultUserPassword is required' });
+    const hasPatch = body.defaultUserPassword !== undefined
+      || body.selfServiceSubscriptionsEnabled !== undefined
+      || body.maxSubscriptionsPerUser !== undefined;
+    if (!hasPatch) {
+      json(res, 400, { error: 'No settings fields to update' });
       return true;
     }
     try {
-      await setDefaultUserPassword(body.defaultUserPassword);
+      await patchWorkspaceSettings({
+        defaultUserPassword: body.defaultUserPassword,
+        selfServiceSubscriptionsEnabled: body.selfServiceSubscriptionsEnabled,
+        maxSubscriptionsPerUser: body.maxSubscriptionsPerUser,
+      });
       const settings = await getWorkspaceSettingsPublic();
       json(res, 200, { settings });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/integrations') {
+    const providers = await listIntegrationProvidersPublic(undefined, 'data');
+    json(res, 200, { providers, total: providers.length });
+    return true;
+  }
+
+  if (req.method === 'POST' && path === '/platform/v1/admin/integrations') {
+    let body: {
+      slug?: string;
+      displayName?: string;
+      category?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      enabled?: boolean;
+    } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const provider = await createCustomIntegrationProvider({
+        slug: body.slug ?? '',
+        displayName: body.displayName ?? '',
+        category: body.category ?? 'custom',
+        baseUrl: body.baseUrl ?? '',
+        apiKey: body.apiKey,
+        enabled: body.enabled,
+      });
+      json(res, 201, { provider });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  const deleteIntegrationMatch = path.match(/^\/platform\/v1\/admin\/integrations\/([^/]+)$/);
+  if (req.method === 'DELETE' && deleteIntegrationMatch) {
+    const slug = deleteIntegrationMatch[1]!;
+    if (isAiProviderSlug(slug)) {
+      json(res, 400, { error: 'AI models are configured under /admin/ai-models' });
+      return true;
+    }
+    const deleted = await deleteCustomIntegrationProvider(slug);
+    json(res, deleted ? 200 : 404, deleted ? { ok: true } : { error: 'Not found or not a custom provider' });
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/ai-models') {
+    const providers = await listIntegrationProvidersPublic(undefined, 'ai');
+    json(res, 200, { providers });
+    return true;
+  }
+
+  const testAiModelMatch = path.match(/^\/platform\/v1\/admin\/ai-models\/([^/]+)\/test$/);
+  if (req.method === 'POST' && testAiModelMatch) {
+    const slug = testAiModelMatch[1]!;
+    if (!isAiProviderSlug(slug)) {
+      json(res, 404, { error: 'Not an AI model provider' });
+      return true;
+    }
+    let body: { baseUrl?: string; modelName?: string; apiKey?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const result = await testAiModelConnection(slug, body);
+      json(res, result.ok ? 200 : 422, result);
+    } catch (err) {
+      json(res, 500, { ok: false, latencyMs: 0, error: String(err) });
+    }
+    return true;
+  }
+
+  const patchIntegrationMatch = path.match(/^\/platform\/v1\/admin\/(?:integrations|ai-models)\/([^/]+)$/);
+  if (req.method === 'PATCH' && patchIntegrationMatch) {
+    const slug = patchIntegrationMatch[1]!;
+    const aiRoute = path.startsWith('/platform/v1/admin/ai-models/');
+    if (aiRoute && !isAiProviderSlug(slug)) {
+      json(res, 404, { error: 'Not an AI model provider' });
+      return true;
+    }
+    if (!aiRoute && isAiProviderSlug(slug)) {
+      json(res, 400, { error: 'AI models are configured under /admin/ai-models' });
+      return true;
+    }
+    let body: {
+      displayName?: string;
+      category?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      modelName?: string;
+      enabled?: boolean;
+      clearApiKey?: boolean;
+    } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const provider = await updateIntegrationProvider(slug, {
+        displayName: body.displayName,
+        category: body.category,
+        baseUrl: body.baseUrl,
+        apiKey: body.apiKey,
+        modelName: body.modelName,
+        enabled: body.enabled,
+        clearApiKey: body.clearApiKey,
+      });
+      if (slug === 'hxxbot') await refreshHxxbotConfigCache();
+      json(res, provider ? 200 : 404, provider ? { provider } : { error: 'Provider not found' });
     } catch (err) {
       json(res, 400, { error: String(err) });
     }

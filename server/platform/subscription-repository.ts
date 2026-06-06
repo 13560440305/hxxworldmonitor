@@ -156,6 +156,37 @@ export async function deleteSubscription(id: string): Promise<boolean> {
   return (res.rowCount ?? 0) > 0;
 }
 
+export async function getSubscriptionByUserAndPreset(
+  userId: string,
+  presetId: string,
+  workspaceId?: string,
+): Promise<SubscriptionRow | null> {
+  const ws = workspaceId ?? getDefaultWorkspaceId();
+  const res = await query<SubscriptionRow>(
+    `SELECT id, workspace_id, user_id, preset_id, name, rules_json, enabled, created_at
+     FROM subscriptions
+     WHERE workspace_id = $1 AND user_id = $2 AND preset_id = $3
+     ORDER BY created_at DESC LIMIT 1`,
+    [ws, userId, presetId],
+  );
+  const row = res.rows[0];
+  if (!row) return null;
+  return { ...row, rules_json: normalizeRulesFromRaw(row.rules_json) };
+}
+
+export async function countUserActiveSubscriptions(
+  userId: string,
+  workspaceId?: string,
+): Promise<number> {
+  const ws = workspaceId ?? getDefaultWorkspaceId();
+  const res = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count FROM subscriptions
+     WHERE workspace_id = $1 AND user_id = $2 AND enabled = TRUE`,
+    [ws, userId],
+  );
+  return Number(res.rows[0]?.count ?? 0);
+}
+
 export async function countSubscriptions(workspaceId?: string): Promise<number> {
   const ws = workspaceId ?? getDefaultWorkspaceId();
   const res = await query<{ count: string }>(

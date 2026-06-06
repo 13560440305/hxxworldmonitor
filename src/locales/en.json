@@ -182,6 +182,16 @@
     "subStatus": "Status",
     "saveProfile": "Save",
     "profileSaved": "Profile saved",
+    "subscribe": "Subscribe",
+    "unsubscribe": "Unsubscribe",
+    "subscribed": "Subscribed",
+    "notSubscribed": "Not subscribed",
+    "subAction": "Action",
+    "subscribeSuccess": "Subscribed",
+    "unsubscribeSuccess": "Unsubscribed",
+    "noCatalogItems": "No subscription options available — contact your administrator",
+    "selfServiceDisabled": "Self-service subscriptions are disabled — contact your administrator",
+    "subscriptionLimitHint": "Subscribed {{count}} / {{max}}",
     "cancel": "Cancel",
     "register": "Register",
     "registerLink": "Create account",
@@ -205,7 +215,13 @@
       "hxxbot_not_configured": "Email service is not configured",
       "send_code_too_soon": "Please wait before requesting another code",
       "account_disabled": "This account has been disabled. Contact an administrator.",
-      "account_deleted": "This account has been deleted. Contact an administrator."
+      "account_deleted": "This account has been deleted. Contact an administrator.",
+      "self_service_disabled": "Self-service subscriptions are disabled",
+      "subscription_limit_reached": "Subscription limit reached",
+      "already_subscribed": "You are already subscribed to this item",
+      "preset_not_found": "Subscription option not found or unavailable",
+      "subscription_not_found": "Subscription not found",
+      "preset_id_required": "Please select a subscription option"
     }
   },
   "panels": {

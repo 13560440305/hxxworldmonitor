@@ -4,7 +4,11 @@ import { loadEnvLocal } from '../server/_shared/load-env.js';
 loadEnvLocal();
 
 import { checkDatabaseHealth, closePool, isDatabaseEnabled } from '../server/_shared/db.js';
-import { checkOssHealth, isOssEnabled } from '../server/_shared/blob-store.js';
+import {
+  checkStorageHealth,
+  getStoragePublicStatus,
+  isStorageEnabled,
+} from '../server/_shared/blob-store.js';
 import { isRedisEnabled, closeRedisClient, publishEmbeddingJob } from '../server/_shared/redis-client.js';
 import { aggregateByCategory, countNewsItems, listRecentNews } from '../server/platform/news-repository.js';
 import { buildDigestFromPg } from '../server/platform/digest-from-pg.js';
@@ -59,6 +63,7 @@ import {
   isAutoMigrateEnabled,
   runPlatformDbBootstrap,
 } from '../server/platform/platform-db-bootstrap.js';
+import { refreshHxxbotConfigCache } from '../server/_shared/hxxbot-config.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -67,7 +72,7 @@ const log = createPlatformLogger('platform-api');
 installProcessLogHandlers(log);
 
 const HXXBOT_CONFIG_HINT =
-  '请在 .env.local 配置 HXXBOT_SITE_URL=https://www.hxxbot.com 与 HXXBOT_API_KEY';
+  '请在管理后台 /admin →「数据源配置」中配置 HXXBOT 的 Base URL 与 API Key';
 
 function hxxbotNotConfigured(): boolean {
   return !isHxxbotConfigured();
@@ -136,14 +141,16 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
     }
 
     if (req.method === 'GET' && path === '/platform/v1/health') {
-      const [db, oss] = await Promise.all([checkDatabaseHealth(), checkOssHealth()]);
+      const [db, storageHealth] = await Promise.all([checkDatabaseHealth(), checkStorageHealth()]);
+      const storageStatus = getStoragePublicStatus();
       const newsCount = isDatabaseEnabled() ? await countNewsItems().catch(() => 0) : 0;
       const embedCount = isDatabaseEnabled() ? await countEmbeddings().catch(() => 0) : 0;
       json(res, 200, {
         status: db.ok ? 'ok' : 'degraded',
         database: db,
         redis: { enabled: isRedisEnabled() },
-        oss: { enabled: isOssEnabled(), ...oss },
+        storage: { enabled: isStorageEnabled(), ...storageStatus, ...storageHealth },
+        oss: { enabled: isStorageEnabled(), ...storageHealth },
         newsItems: newsCount,
         embeddings: embedCount,
         hxxbot: getHxxbotPublicStatus(),
@@ -300,7 +307,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     if (req.method === 'POST' && path === '/platform/v1/briefs/email') {
       if (!isDatabaseEnabled() || hxxbotNotConfigured()) {
-        json(res, 503, { error: `DATABASE_URL 与 HXXBOT 均需在 .env.local 配置` });
+        json(res, 503, { error: `需要 DATABASE_URL，且 HXXBOT 须在管理后台「数据源配置」中启用并填写密钥` });
         return;
       }
       let body: {
@@ -506,7 +513,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     if (req.method === 'POST' && /^\/platform\/v1\/subscriptions\/[^/]+\/deliver$/.test(path)) {
       if (!isDatabaseEnabled() || hxxbotNotConfigured()) {
-        json(res, 503, { error: `DATABASE_URL 与 HXXBOT 均需在 .env.local 配置` });
+        json(res, 503, { error: `需要 DATABASE_URL，且 HXXBOT 须在管理后台「数据源配置」中启用并填写密钥` });
         return;
       }
       const subId = path.split('/')[4]!;
@@ -531,7 +538,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
     if (req.method === 'POST' && path === '/platform/v1/subscriptions/deliver-all') {
       if (!isDatabaseEnabled() || hxxbotNotConfigured()) {
-        json(res, 503, { error: `DATABASE_URL 与 HXXBOT 均需在 .env.local 配置` });
+        json(res, 503, { error: `需要 DATABASE_URL，且 HXXBOT 须在管理后台「数据源配置」中启用并填写密钥` });
         return;
       }
       try {
@@ -742,6 +749,7 @@ async function startServer(): Promise<void> {
         if (bootstrap.applied.length) {
           log.info('applied migrations', { files: bootstrap.applied });
         }
+        await refreshHxxbotConfigCache();
       } catch (err) {
         log.error('database bootstrap failed — fix DATABASE_URL or run npm run platform:db:migrate', err);
         process.exit(1);

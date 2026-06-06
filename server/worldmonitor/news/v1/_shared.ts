@@ -140,7 +140,7 @@ Rules:
 }
 
 // ========================================================================
-// SummarizeArticle: Provider credential resolution
+// SummarizeArticle: Provider credential resolution (OpenAI-compatible)
 // ========================================================================
 
 export interface ProviderCredentials {
@@ -150,52 +150,72 @@ export interface ProviderCredentials {
   extraBody?: Record<string, unknown>;
 }
 
-export function getProviderCredentials(provider: string): ProviderCredentials | null {
-  if (provider === 'ollama') {
-    const baseUrl = process.env.OLLAMA_API_URL;
-    if (!baseUrl) return null;
-    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-    const apiKey = process.env.OLLAMA_API_KEY;
-    if (apiKey) {
-      headers['Authorization'] = `Bearer ${apiKey}`;
-    }
-    const rawMax = parseInt(process.env.OLLAMA_MAX_TOKENS || '300', 10);
-    const ollamaMaxTokens = Number.isFinite(rawMax) ? Math.min(Math.max(rawMax, 50), 2000) : 300;
-    return {
-      apiUrl: new URL('/v1/chat/completions', baseUrl).toString(),
-      model: process.env.OLLAMA_MODEL || 'llama3.1:8b',
-      headers,
-      extraBody: { think: false, max_tokens: ollamaMaxTokens },
-    };
+const AI_PROVIDER_SLUGS = new Set(['ollama', 'groq', 'openrouter']);
+
+function buildChatCompletionsUrl(baseUrl: string): string {
+  const trimmed = baseUrl.replace(/\/+$/, '');
+  if (trimmed.endsWith('/v1')) {
+    return `${trimmed}/chat/completions`;
+  }
+  return `${trimmed}/v1/chat/completions`;
+}
+
+function buildCredentialsFromIntegration(
+  provider: string,
+  baseUrl: string,
+  apiKey: string,
+  modelName: string,
+): ProviderCredentials | null {
+  if (!baseUrl || !modelName) return null;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (apiKey) {
+    headers['Authorization'] = `Bearer ${apiKey}`;
   }
 
-  if (provider === 'groq') {
-    const apiKey = process.env.GROQ_API_KEY;
-    if (!apiKey) return null;
-    return {
-      apiUrl: 'https://api.groq.com/openai/v1/chat/completions',
-      model: 'llama-3.1-8b-instant',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-      },
-    };
-  }
+  const credentials: ProviderCredentials = {
+    apiUrl: buildChatCompletionsUrl(baseUrl),
+    model: modelName,
+    headers,
+  };
 
   if (provider === 'openrouter') {
-    const apiKey = process.env.OPENROUTER_API_KEY;
-    if (!apiKey) return null;
-    return {
-      apiUrl: 'https://openrouter.ai/api/v1/chat/completions',
-      model: 'openrouter/free',
-      headers: {
-        'Authorization': `Bearer ${apiKey}`,
-        'Content-Type': 'application/json',
-        'HTTP-Referer': 'https://worldmonitor.app',
-        'X-Title': 'WorldMonitor',
-      },
-    };
+    headers['HTTP-Referer'] = 'https://worldmonitor.app';
+    headers['X-Title'] = 'WorldMonitor';
   }
 
-  return null;
+  if (provider === 'ollama') {
+    credentials.extraBody = { think: false, max_tokens: 300 };
+  }
+
+  return credentials;
+}
+
+/** Build OpenAI-compatible credentials from explicit base URL / key / model (admin test + DB resolver). */
+export function buildAiProviderCredentials(
+  provider: string,
+  baseUrl: string,
+  apiKey: string,
+  modelName: string,
+): ProviderCredentials | null {
+  return buildCredentialsFromIntegration(provider, baseUrl, apiKey, modelName);
+}
+
+/** Resolve OpenAI-compatible LLM credentials from DB (admin「AI 模型」). */
+export async function getProviderCredentials(provider: string): Promise<ProviderCredentials | null> {
+  if (!AI_PROVIDER_SLUGS.has(provider)) return null;
+
+  const { getIntegrationProviderCached } = await import('../../../platform/integration-providers-repository.js');
+  const { getProviderDefinition } = await import('../../../platform/integration-provider-catalog.js');
+  const def = getProviderDefinition(provider);
+  const resolved = await getIntegrationProviderCached(provider);
+  if (!resolved?.enabled || !resolved.baseUrl || !resolved.modelName) return null;
+  const needsKey = !def?.apiKeyOptional;
+  if (needsKey && !resolved.apiKey) return null;
+  return buildCredentialsFromIntegration(
+    provider,
+    resolved.baseUrl,
+    resolved.apiKey,
+    resolved.modelName,
+  );
 }

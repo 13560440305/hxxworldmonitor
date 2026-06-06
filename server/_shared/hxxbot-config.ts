@@ -1,3 +1,10 @@
+import { isDatabaseEnabled } from './db.js';
+import {
+  getIntegrationProviderCached,
+  invalidateIntegrationProviderCache,
+  type ResolvedIntegrationProvider,
+} from '../platform/integration-providers-repository.js';
+
 declare const process: { env: Record<string, string | undefined> };
 
 export class HxxbotConfigError extends Error {
@@ -9,24 +16,32 @@ export class HxxbotConfigError extends Error {
   }
 }
 
-function trimEnv(key: string): string | undefined {
-  const v = process.env[key]?.trim();
-  return v || undefined;
+let cachedProvider: ResolvedIntegrationProvider | null | undefined;
+
+/** Load HXXBOT credentials from DB (called after migrations/seeds on startup). */
+export async function refreshHxxbotConfigCache(): Promise<void> {
+  if (!isDatabaseEnabled()) {
+    cachedProvider = undefined;
+    return;
+  }
+  try {
+    cachedProvider = await getIntegrationProviderCached('hxxbot');
+  } catch {
+    cachedProvider = undefined;
+  }
+}
+
+export function invalidateHxxbotConfigCache(): void {
+  cachedProvider = undefined;
+  invalidateIntegrationProviderCache();
 }
 
 /**
- * Resolve Open API base URL from `.env.local`:
- * - `HXXBOT_API_URL` — full base, e.g. https://www.hxxbot.com/api
- * - or `HXXBOT_SITE_URL` / `HXXBOT_BASE_URL` — site root, `/api` is appended
+ * Resolve Open API base URL — from DB integration_providers only.
  */
 export function resolveHxxbotApiBaseUrl(): string | undefined {
-  const explicit = trimEnv('HXXBOT_API_URL');
-  if (explicit) {
-    return explicit.replace(/\/+$/, '');
-  }
-  const site = trimEnv('HXXBOT_SITE_URL') ?? trimEnv('HXXBOT_BASE_URL');
-  if (site) {
-    return `${site.replace(/\/+$/, '')}/api`;
+  if (cachedProvider?.enabled && cachedProvider.baseUrl) {
+    return cachedProvider.baseUrl.replace(/\/+$/, '');
   }
   return undefined;
 }
@@ -39,29 +54,30 @@ export interface HxxbotConfig {
 
 export function getHxxbotConfig(opts?: { requireKey?: boolean }): HxxbotConfig {
   const requireKey = opts?.requireKey !== false;
-  const apiBaseUrl = resolveHxxbotApiBaseUrl();
-  if (!apiBaseUrl) {
+  if (!cachedProvider?.enabled || !cachedProvider.baseUrl) {
     throw new HxxbotConfigError(
-      'HXXBOT 未配置：请在 .env.local 中设置 HXXBOT_SITE_URL=https://www.hxxbot.com 或 HXXBOT_API_URL=https://www.hxxbot.com/api',
+      'HXXBOT 未配置：请在管理后台「数据源配置」中设置 Base URL 并启用',
     );
   }
 
-  const apiKey = trimEnv('HXXBOT_API_KEY');
+  const apiBaseUrl = cachedProvider.baseUrl.replace(/\/+$/, '');
+  const apiKey = cachedProvider.apiKey ?? '';
   if (requireKey && !apiKey) {
     throw new HxxbotConfigError(
-      'HXXBOT 密钥未配置：请在 .env.local 中设置 HXXBOT_API_KEY（用户中心 → 我的密钥）',
+      'HXXBOT 密钥未配置：请在管理后台「数据源配置」中设置 API Key',
     );
   }
 
   return {
     apiBaseUrl,
-    apiKey: apiKey ?? '',
-    toolVersion: trimEnv('HXXBOT_TOOL_VERSION') ?? '1.0.0',
+    apiKey,
+    toolVersion: process.env.HXXBOT_TOOL_VERSION?.trim() || '1.0.0',
   };
 }
 
 export function isHxxbotConfigured(): boolean {
-  return Boolean(resolveHxxbotApiBaseUrl() && trimEnv('HXXBOT_API_KEY'));
+  if (cachedProvider?.enabled === false) return false;
+  return Boolean(cachedProvider?.enabled && cachedProvider.baseUrl && cachedProvider.apiKey);
 }
 
 /** Safe summary for health/status endpoints — never exposes the secret. */
@@ -70,14 +86,18 @@ export function getHxxbotPublicStatus(): {
   apiBaseUrl: string | null;
   hasApiKey: boolean;
   toolVersion: string | null;
+  source: 'db' | null;
 } {
-  const apiBaseUrl = resolveHxxbotApiBaseUrl() ?? null;
-  const hasApiKey = Boolean(trimEnv('HXXBOT_API_KEY'));
+  const apiBaseUrl = (cachedProvider?.enabled && cachedProvider.baseUrl)
+    ? cachedProvider.baseUrl.replace(/\/+$/, '')
+    : null;
+  const hasApiKey = Boolean(cachedProvider?.enabled && cachedProvider.apiKey);
   return {
-    configured: Boolean(apiBaseUrl && hasApiKey),
+    configured: Boolean(apiBaseUrl && hasApiKey && cachedProvider?.enabled !== false),
     apiBaseUrl,
     hasApiKey,
-    toolVersion: trimEnv('HXXBOT_TOOL_VERSION') ?? null,
+    toolVersion: process.env.HXXBOT_TOOL_VERSION?.trim() || null,
+    source: hasApiKey ? 'db' : null,
   };
 }
 

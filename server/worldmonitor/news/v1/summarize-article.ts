@@ -48,12 +48,12 @@ export async function summarizeArticle(
 
   // Provider credential check
   const skipReasons: Record<string, string> = {
-    ollama: 'OLLAMA_API_URL not configured',
-    groq: 'GROQ_API_KEY not configured',
-    openrouter: 'OPENROUTER_API_KEY not configured',
+    ollama: 'OpenAI-compatible LLM not configured (Base URL + model)',
+    groq: 'Groq not configured (Base URL + API Key + model)',
+    openrouter: 'OpenRouter not configured (Base URL + API Key + model)',
   };
 
-  const credentials = getProviderCredentials(provider);
+  const credentials = await getProviderCredentials(provider);
   if (!credentials) {
     return {
       summary: '',
