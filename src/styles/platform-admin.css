@@ -743,3 +743,48 @@ html[data-theme='light'] .pa-remarks-tooltip {
   white-space: pre-wrap;
   word-break: break-all;
 }
+
+.pa-error {
+  color: var(--pa-danger);
+  margin: 0 0 12px;
+}
+
+.pa-api-key-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.pa-api-key-box {
+  padding: 12px;
+  border-radius: var(--pa-radius);
+  border: 1px solid var(--pa-border);
+  background: var(--pa-bg);
+}
+
+.pa-api-key-value {
+  display: block;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 13px;
+  line-height: 1.5;
+  word-break: break-all;
+}
+
+.pa-api-key-value.is-masked {
+  letter-spacing: 0.02em;
+}
+
+.pa-api-key-value.is-revealed {
+  color: var(--pa-ok);
+}
+
+.pa-api-key-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+}
+
+.pa-api-key-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

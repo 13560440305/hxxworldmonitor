@@ -19,6 +19,14 @@ import {
   syncUserSubscriptionLanguages,
   unsubscribeUserSubscription,
 } from './user-subscription-service.js';
+import {
+  createUserApiKey,
+  getUserApiKeyMeta,
+  getUserApiKeyWithSecret,
+  revokeUserApiKey,
+  rotateUserApiKey,
+  updateUserApiKeyExpiry,
+} from './user-api-key-service.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -314,6 +322,121 @@ export async function handleUserAuthRoutes(
       count: subs.length,
     });
     return true;
+  }
+
+  if (path === '/platform/v1/auth/api-key' || path.startsWith('/platform/v1/auth/api-key/')) {
+    try {
+      const user = await getUserById(auth.session.sub);
+      if (!user) {
+        json(res, 401, { error: 'User not found' });
+        return true;
+      }
+      await assertSubscriberCanLogin(user);
+
+      if (req.method === 'GET' && path === '/platform/v1/auth/api-key') {
+        const key = await getUserApiKeyMeta(auth.session.sub);
+        json(res, 200, {
+          hasKey: key.hasKey,
+          keyPrefix: key.keyPrefix,
+          expiresAt: key.expiresAt,
+          permanent: key.permanent,
+          createdAt: key.createdAt,
+          expired: key.expired,
+        });
+        return true;
+      }
+
+      if (req.method === 'GET' && path === '/platform/v1/auth/api-key/reveal') {
+        const key = await getUserApiKeyWithSecret(auth.session.sub);
+        if (!key.hasKey || !key.apiKey) {
+          json(res, 404, { error: 'api_key_not_found' });
+          return true;
+        }
+        json(res, 200, {
+          hasKey: true,
+          apiKey: key.apiKey,
+          keyPrefix: key.keyPrefix,
+          expiresAt: key.expiresAt,
+          permanent: key.permanent,
+          createdAt: key.createdAt,
+        });
+        return true;
+      }
+
+      if (req.method === 'POST' && path === '/platform/v1/auth/api-key') {
+        let body: { permanent?: boolean; expiresAt?: string | null } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as typeof body;
+        } catch { /* empty */ }
+        try {
+          const key = await createUserApiKey(auth.session.sub, body);
+          json(res, 201, {
+            hasKey: key.hasKey,
+            apiKey: key.apiKey,
+            keyPrefix: key.keyPrefix,
+            expiresAt: key.expiresAt,
+            permanent: key.permanent,
+            createdAt: key.createdAt,
+          });
+        } catch (err) {
+          const code = String(err).replace(/^Error:\s*/, '');
+          json(res, code === 'api_key_already_exists' ? 409 : 400, { error: code });
+        }
+        return true;
+      }
+
+      if (req.method === 'POST' && path === '/platform/v1/auth/api-key/rotate') {
+        let body: { permanent?: boolean; expiresAt?: string | null } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as typeof body;
+        } catch { /* empty */ }
+        const key = await rotateUserApiKey(auth.session.sub, body);
+        json(res, 200, {
+          hasKey: key.hasKey,
+          apiKey: key.apiKey,
+          keyPrefix: key.keyPrefix,
+          expiresAt: key.expiresAt,
+          permanent: key.permanent,
+          createdAt: key.createdAt,
+        });
+        return true;
+      }
+
+      if (req.method === 'PATCH' && path === '/platform/v1/auth/api-key/expiry') {
+        let body: { permanent?: boolean; expiresAt?: string | null } = {};
+        try {
+          const raw = await readBody(req);
+          if (raw) body = JSON.parse(raw) as typeof body;
+        } catch { /* empty */ }
+        try {
+          const key = await updateUserApiKeyExpiry(auth.session.sub, body);
+          json(res, 200, {
+            hasKey: key.hasKey,
+            keyPrefix: key.keyPrefix,
+            expiresAt: key.expiresAt,
+            permanent: key.permanent,
+            createdAt: key.createdAt,
+            expired: key.expired,
+          });
+        } catch (err) {
+          const code = String(err).replace(/^Error:\s*/, '');
+          json(res, code === 'api_key_not_found' ? 404 : 400, { error: code });
+        }
+        return true;
+      }
+
+      if (req.method === 'DELETE' && path === '/platform/v1/auth/api-key') {
+        await revokeUserApiKey(auth.session.sub);
+        json(res, 200, { ok: true });
+        return true;
+      }
+    } catch (err) {
+      const code = String(err).replace(/^Error:\s*/, '');
+      json(res, code === 'account_disabled' || code === 'account_deleted' ? 403 : 400, { error: code });
+      return true;
+    }
   }
 
   json(res, 404, { error: 'Not found' });

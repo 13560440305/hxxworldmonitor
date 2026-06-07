@@ -1,5 +1,11 @@
 import '../styles/user-account.css';
 import { escapeHtml } from '@/utils/sanitize';
+import {
+  bindApiKeyExpiryToggle,
+  defaultApiKeyExpiryLocal,
+  readApiKeyExpiryOptions,
+  toDatetimeLocalValue,
+} from '@/utils/api-key-expiry';
 import { t } from '@/services/i18n';
 import {
   fetchAuthStatus,
@@ -15,8 +21,16 @@ import {
   resetPasswordWithCode,
   sendPasswordResetCode,
   updateUserProfile,
+  fetchUserApiKey,
+  createUserApiKey,
+  rotateUserApiKey,
+  updateUserApiKeyExpiry,
+  deleteUserApiKey,
+  revealUserApiKey,
+  EMPTY_USER_API_KEY,
   type PlatformUserProfile,
   type SubscriptionCatalog,
+  type UserApiKeyInfo,
 } from '@/services/platform-user-auth';
 
 type AuthView = 'login' | 'register' | 'forgot';
@@ -55,6 +69,10 @@ export class UserAccountMenu {
   private authView: AuthView = 'login';
   private codeCooldownUntil = 0;
   private codeCooldownTimer: ReturnType<typeof setInterval> | null = null;
+  private focusApiKeyOnOpen = false;
+  private apiKeyRevealed = false;
+  private apiKeyFullText: string | null = null;
+  private apiKeyCreating = false;
 
   constructor(mount: HTMLElement) {
     this.root = document.createElement('div');
@@ -85,6 +103,33 @@ export class UserAccountMenu {
     }
     this.user = await fetchCurrentUser();
     this.render();
+    if (this.user && this.shouldOpenApiKeyFromUrl()) {
+      this.focusApiKeyOnOpen = true;
+      void this.openProfileModal();
+    }
+  }
+
+  private shouldOpenApiKeyFromUrl(): boolean {
+    try {
+      const params = new URLSearchParams(window.location.search);
+      if (params.get('account') === 'apiKey') return true;
+      const hash = window.location.hash.replace(/^#/, '');
+      if (hash === 'account=apiKey' || hash.startsWith('account=apiKey&')) return true;
+    } catch { /* ignore */ }
+    return false;
+  }
+
+  private clearApiKeyDeepLink(): void {
+    try {
+      const url = new URL(window.location.href);
+      if (url.searchParams.get('account') === 'apiKey') {
+        url.searchParams.delete('account');
+        window.history.replaceState({}, '', url.pathname + url.search + url.hash);
+      }
+      if (url.hash === '#account=apiKey' || url.hash.startsWith('#account=apiKey')) {
+        window.history.replaceState({}, '', url.pathname + url.search);
+      }
+    } catch { /* ignore */ }
   }
 
   private render(): void {
@@ -337,6 +382,10 @@ export class UserAccountMenu {
       this.user = await loginUser(email, password);
       this.closeAuthModal();
       this.render();
+      if (this.shouldOpenApiKeyFromUrl()) {
+        this.focusApiKeyOnOpen = true;
+        void this.openProfileModal();
+      }
     } catch (err) {
       this.showAuthError(mapAuthError(err));
     } finally {
@@ -364,6 +413,10 @@ export class UserAccountMenu {
       this.user = await registerUser(email, password);
       this.closeAuthModal();
       this.render();
+      if (this.shouldOpenApiKeyFromUrl()) {
+        this.focusApiKeyOnOpen = true;
+        void this.openProfileModal();
+      }
     } catch (err) {
       this.showAuthError(mapAuthError(err));
     } finally {
@@ -491,16 +544,33 @@ export class UserAccountMenu {
     });
 
     let catalog: SubscriptionCatalog | null = null;
+    let apiKeyInfo: UserApiKeyInfo = { ...EMPTY_USER_API_KEY };
+    let apiKeyLoadError = '';
     try {
       catalog = await fetchSubscriptionCatalog();
     } catch {
       catalog = null;
     }
+    try {
+      apiKeyInfo = await fetchUserApiKey();
+    } catch (err) {
+      apiKeyLoadError = mapAuthError(err);
+    }
 
     const body = overlay.querySelector('.wm-user-modal-body');
     if (!body || !this.user) return;
 
-    this.renderProfileBody(body, catalog);
+    this.apiKeyRevealed = false;
+    this.apiKeyFullText = null;
+    this.renderProfileBody(body, catalog, apiKeyInfo, apiKeyLoadError);
+
+    if (this.focusApiKeyOnOpen) {
+      this.focusApiKeyOnOpen = false;
+      this.clearApiKeyDeepLink();
+      requestAnimationFrame(() => {
+        overlay.querySelector('#userApiKeySection')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      });
+    }
 
     const footer = overlay.querySelector('#userProfileFooter') as HTMLElement | null;
     if (footer) {
@@ -515,7 +585,328 @@ export class UserAccountMenu {
     }
   }
 
-  private renderProfileBody(body: HTMLElement, catalog: SubscriptionCatalog | null): void {
+  private formatApiKeyExpiryLabel(apiKey: UserApiKeyInfo): string {
+    if (apiKey.expiresAt) {
+      const when = new Date(apiKey.expiresAt).toLocaleString();
+      if (apiKey.expired) {
+        return `${escapeHtml(t('account.apiKeyExpired'))} (${escapeHtml(when)})`;
+      }
+      return `${escapeHtml(t('account.apiKeyExpires'))}: ${escapeHtml(when)}`;
+    }
+    return escapeHtml(t('account.apiKeyPermanent'));
+  }
+
+  private renderApiKeyExpiryFields(showForExistingKey = false, existing?: UserApiKeyInfo): string {
+    const useUntil = Boolean(existing?.expiresAt && !existing.expired);
+    const defaultUntil = useUntil && existing?.expiresAt
+      ? toDatetimeLocalValue(existing.expiresAt)
+      : defaultApiKeyExpiryLocal();
+    const saveBtn = showForExistingKey
+      ? `<button type="button" class="wm-user-btn-secondary" id="userApiKeySaveExpiryBtn">${escapeHtml(t('account.apiKeySaveExpiry'))}</button>`
+      : '';
+    const hint = showForExistingKey
+      ? t('account.apiKeyExpirySaveHint')
+      : '';
+    return `
+      <div class="wm-user-api-key-expiry">
+        <label class="wm-user-muted wm-user-api-key-expiry-label">${escapeHtml(t('account.apiKeyExpiryLabel'))}</label>
+        <label class="wm-user-radio-label">
+          <input type="radio" name="userApiKeyExpiryMode" value="permanent"${useUntil ? '' : ' checked'} />
+          ${escapeHtml(t('account.apiKeyPermanent'))}
+        </label>
+        <label class="wm-user-radio-label">
+          <input type="radio" name="userApiKeyExpiryMode" value="until"${useUntil ? ' checked' : ''} />
+          ${escapeHtml(t('account.apiKeyExpiryUntil'))}
+        </label>
+        <div id="userApiKeyExpiresAtWrap"${useUntil ? '' : ' hidden'}>
+          <input type="datetime-local" id="userApiKeyExpiresAt" value="${defaultUntil}" />
+        </div>
+        ${hint ? `<p class="wm-user-muted wm-user-field-hint">${escapeHtml(hint)}</p>` : ''}
+        ${saveBtn}
+      </div>`;
+  }
+
+  private readApiKeyExpiryFromOverlay(): { permanent: boolean; expiresAt: string | null } {
+    const root = this.profileOverlay ?? document;
+    return readApiKeyExpiryOptions(root, 'userApiKeyExpiryMode', 'userApiKeyExpiresAt', {
+      required: t('account.apiKeyExpiryRequired'),
+      invalid: t('account.apiKeyExpiryInvalid'),
+    });
+  }
+
+  private renderApiKeySection(apiKey: UserApiKeyInfo, loadError = ''): string {
+    const expiry = this.formatApiKeyExpiryLabel(apiKey);
+
+    const statusBadge = apiKey.expired
+      ? `<span class="wm-user-badge off">${escapeHtml(t('account.apiKeyExpired'))}</span>`
+      : apiKey.hasKey
+        ? `<span class="wm-user-badge">${escapeHtml(t('account.enabled'))}</span>`
+        : '';
+
+    const errorBlock = loadError
+      ? `<p class="wm-user-error" id="userApiKeyError">${escapeHtml(loadError)}</p>`
+      : `<p class="wm-user-error" id="userApiKeyError" hidden></p>`;
+    const successBlock = `<p class="wm-user-success" id="userApiKeySuccess" hidden></p>`;
+
+    if (!apiKey.hasKey) {
+      const creating = this.apiKeyCreating;
+      return `
+      <section class="wm-user-profile-section" id="userApiKeySection">
+        <h3>${escapeHtml(t('account.apiKeySection'))}</h3>
+        <p class="wm-user-muted">${escapeHtml(t('account.apiKeyHint'))}</p>
+        <p class="wm-user-muted">${escapeHtml(t('account.apiKeyNone'))}</p>
+        ${errorBlock}
+        ${successBlock}
+        ${this.renderApiKeyExpiryFields()}
+        <button type="button" class="wm-user-btn-primary" id="userApiKeyCreateBtn"${creating ? ' disabled' : ''}>${escapeHtml(creating ? t('common.loading') : t('account.apiKeyCreate'))}</button>
+      </section>`;
+    }
+
+    const masked = apiKey.keyPrefix ?? 'wmuk_****';
+    const displayKey = this.apiKeyRevealed && this.apiKeyFullText
+      ? this.apiKeyFullText
+      : masked;
+    const viewBtn = this.apiKeyRevealed
+      ? `<button type="button" class="wm-user-btn-secondary" id="userApiKeyHideBtn">${escapeHtml(t('account.apiKeyHide'))}</button>`
+      : `<button type="button" class="wm-user-btn-secondary" id="userApiKeyViewBtn">${escapeHtml(t('account.apiKeyView'))}</button>`;
+
+    return `
+      <section class="wm-user-profile-section" id="userApiKeySection">
+        <h3>${escapeHtml(t('account.apiKeySection'))} ${statusBadge}</h3>
+        <p class="wm-user-muted">${escapeHtml(t('account.apiKeyHint'))}</p>
+        <div class="wm-user-api-key-box">
+          <code class="wm-user-api-key-value${this.apiKeyRevealed ? ' is-revealed' : ' is-masked'}" id="userApiKeyValue">${escapeHtml(displayKey)}</code>
+          <p class="wm-user-muted wm-user-field-hint">${escapeHtml(this.apiKeyRevealed ? t('account.apiKeyRevealHint') : t('account.apiKeyMaskedHint'))}</p>
+          <p class="wm-user-muted">${expiry}</p>
+        </div>
+        ${errorBlock}
+        ${successBlock}
+        ${this.renderApiKeyExpiryFields(true, apiKey)}
+        <div class="wm-user-api-key-actions">
+          ${viewBtn}
+          <button type="button" class="wm-user-btn-secondary" id="userApiKeyCopyBtn">${escapeHtml(t('account.apiKeyCopy'))}</button>
+          <button type="button" class="wm-user-btn-secondary" id="userApiKeyRotateBtn">${escapeHtml(t('account.apiKeyRotate'))}</button>
+          <button type="button" class="wm-user-btn-secondary wm-user-btn-danger-text" id="userApiKeyDeleteBtn">${escapeHtml(t('account.apiKeyDelete'))}</button>
+        </div>
+      </section>`;
+  }
+
+  private wireApiKeyHandlers(_apiKey: UserApiKeyInfo): void {
+    const root = this.profileOverlay ?? document;
+    bindApiKeyExpiryToggle(root, 'userApiKeyExpiryMode', 'userApiKeyExpiresAt', 'userApiKeyExpiresAtWrap');
+    this.profileOverlay?.querySelector('#userApiKeySaveExpiryBtn')?.addEventListener('click', () => {
+      void this.handleSaveApiKeyExpiry();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyCreateBtn')?.addEventListener('click', () => {
+      void this.handleCreateApiKey();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyViewBtn')?.addEventListener('click', () => {
+      void this.handleViewApiKey();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyHideBtn')?.addEventListener('click', () => {
+      this.apiKeyRevealed = false;
+      this.apiKeyFullText = null;
+      void this.refreshApiKeySectionOnly();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyCopyBtn')?.addEventListener('click', () => {
+      void this.handleCopyApiKey();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyRotateBtn')?.addEventListener('click', () => {
+      void this.handleRotateApiKey();
+    });
+    this.profileOverlay?.querySelector('#userApiKeyDeleteBtn')?.addEventListener('click', () => {
+      void this.handleDeleteApiKey();
+    });
+  }
+
+  private showApiKeyError(message: string): void {
+    const errEl = this.profileOverlay?.querySelector('#userApiKeyError') as HTMLElement | null;
+    const okEl = this.profileOverlay?.querySelector('#userApiKeySuccess') as HTMLElement | null;
+    if (okEl) okEl.hidden = true;
+    if (errEl) {
+      errEl.textContent = message;
+      errEl.hidden = false;
+    }
+    errEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  private showApiKeySuccess(message: string): void {
+    const errEl = this.profileOverlay?.querySelector('#userApiKeyError') as HTMLElement | null;
+    const okEl = this.profileOverlay?.querySelector('#userApiKeySuccess') as HTMLElement | null;
+    if (errEl) errEl.hidden = true;
+    if (okEl) {
+      okEl.textContent = message;
+      okEl.hidden = false;
+    }
+    okEl?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  private async refreshApiKeySectionOnly(): Promise<void> {
+    const section = this.profileOverlay?.querySelector('#userApiKeySection');
+    if (!section?.parentElement) return;
+    try {
+      const apiKeyInfo = await fetchUserApiKey();
+      const html = this.renderApiKeySection(apiKeyInfo);
+      const wrap = document.createElement('div');
+      wrap.innerHTML = html;
+      const newSection = wrap.firstElementChild;
+      if (newSection) {
+        section.replaceWith(newSection);
+        this.wireApiKeyHandlers(apiKeyInfo);
+      }
+    } catch (err) {
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleCreateApiKey(): Promise<void> {
+    if (this.apiKeyCreating) return;
+    let expiry: { permanent: boolean; expiresAt: string | null };
+    try {
+      expiry = this.readApiKeyExpiryFromOverlay();
+    } catch (err) {
+      this.showApiKeyError(String(err));
+      return;
+    }
+    this.apiKeyCreating = true;
+    await this.refreshApiKeySectionOnly();
+    try {
+      const created = await createUserApiKey(expiry);
+      this.apiKeyRevealed = true;
+      this.apiKeyFullText = created.apiKey ?? null;
+      this.apiKeyCreating = false;
+      await this.refreshProfileSections();
+      this.showApiKeySuccess(t('account.apiKeyCreated'));
+    } catch (err) {
+      this.apiKeyCreating = false;
+      await this.refreshApiKeySectionOnly();
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleViewApiKey(): Promise<void> {
+    try {
+      const revealed = await revealUserApiKey();
+      this.apiKeyRevealed = true;
+      this.apiKeyFullText = revealed.apiKey;
+      await this.refreshApiKeySectionOnly();
+    } catch (err) {
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleSaveApiKeyExpiry(): Promise<void> {
+    let expiry: { permanent: boolean; expiresAt: string | null };
+    try {
+      expiry = this.readApiKeyExpiryFromOverlay();
+    } catch (err) {
+      this.showApiKeyError(String(err));
+      return;
+    }
+    try {
+      await updateUserApiKeyExpiry(expiry);
+      await this.refreshProfileSections();
+      this.showApiKeySuccess(t('account.apiKeyExpirySaved'));
+    } catch (err) {
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleRotateApiKey(): Promise<void> {
+    if (!window.confirm(t('account.apiKeyRotateConfirm'))) return;
+    let expiry: { permanent: boolean; expiresAt: string | null };
+    try {
+      expiry = this.readApiKeyExpiryFromOverlay();
+    } catch (err) {
+      this.showApiKeyError(String(err));
+      return;
+    }
+    try {
+      const rotated = await rotateUserApiKey(expiry);
+      this.apiKeyRevealed = true;
+      this.apiKeyFullText = rotated.apiKey ?? null;
+      await this.refreshProfileSections();
+      this.showApiKeySuccess(t('account.apiKeyRotated'));
+    } catch (err) {
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleDeleteApiKey(): Promise<void> {
+    if (!window.confirm(t('account.apiKeyDeleteConfirm'))) return;
+    try {
+      await deleteUserApiKey();
+      this.apiKeyRevealed = false;
+      this.apiKeyFullText = null;
+      await this.refreshProfileSections();
+      this.showApiKeySuccess(t('account.apiKeyDeleted'));
+    } catch (err) {
+      this.showApiKeyError(mapAuthError(err));
+    }
+  }
+
+  private async handleCopyApiKey(): Promise<void> {
+    let text = this.apiKeyFullText?.trim() ?? '';
+    if (!text) {
+      try {
+        const revealed = await revealUserApiKey();
+        text = revealed.apiKey?.trim() ?? '';
+      } catch (err) {
+        this.showApiKeyError(mapAuthError(err));
+        return;
+      }
+    }
+    if (!text) {
+      this.showApiKeyError(t('account.apiKeyNone'));
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(text);
+      this.showApiKeySuccess(t('account.apiKeyCopied'));
+    } catch {
+      this.showApiKeyError(t('account.apiKeyCopyFailed'));
+    }
+  }
+
+  private async refreshProfileSections(): Promise<void> {
+    const overlay = this.profileOverlay;
+    if (!overlay || !this.user) return;
+    const body = overlay.querySelector('.wm-user-modal-body') as HTMLElement | null;
+    if (!body) return;
+    const displayName = (body.querySelector('#userProfileDisplayName') as HTMLInputElement | null)?.value;
+    const preferredLang = (body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null)?.value;
+    let apiKeyLoadError = '';
+    try {
+      const [catalog, apiKeyInfo] = await Promise.all([
+        fetchSubscriptionCatalog(),
+        fetchUserApiKey(),
+      ]);
+      this.renderProfileBody(body, catalog, apiKeyInfo, apiKeyLoadError);
+      if (displayName !== undefined) {
+        const nameEl = body.querySelector('#userProfileDisplayName') as HTMLInputElement | null;
+        if (nameEl) nameEl.value = displayName;
+      }
+      if (preferredLang) {
+        const langEl = body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null;
+        if (langEl) langEl.value = preferredLang;
+      }
+    } catch (err) {
+      apiKeyLoadError = mapAuthError(err);
+      try {
+        const catalog = await fetchSubscriptionCatalog();
+        this.renderProfileBody(body, catalog, { ...EMPTY_USER_API_KEY }, apiKeyLoadError);
+      } catch {
+        this.showApiKeyError(apiKeyLoadError);
+      }
+    }
+  }
+
+  private renderProfileBody(
+    body: HTMLElement,
+    catalog: SubscriptionCatalog | null,
+    apiKeyInfo: UserApiKeyInfo = EMPTY_USER_API_KEY,
+    apiKeyLoadError = '',
+  ): void {
     if (!this.user) return;
 
     const limitHint = catalog && catalog.maxSubscriptionsPerUser > 0
@@ -572,6 +963,7 @@ export class UserAccountMenu {
         <p class="wm-user-error" id="userProfileError" hidden></p>
         <p class="wm-user-success" id="userProfileSuccess" hidden></p>
       </section>
+      ${this.renderApiKeySection(apiKeyInfo, apiKeyLoadError)}
       <section class="wm-user-profile-section">
         <h3>${escapeHtml(t('account.mySubscriptions'))}</h3>
         ${selfServiceOff}
@@ -603,29 +995,11 @@ export class UserAccountMenu {
         void this.handleUnsubscribe(subId);
       });
     });
+    this.wireApiKeyHandlers(apiKeyInfo);
   }
 
   private async refreshCatalogSection(): Promise<void> {
-    const overlay = this.profileOverlay;
-    if (!overlay || !this.user) return;
-    const body = overlay.querySelector('.wm-user-modal-body') as HTMLElement | null;
-    if (!body) return;
-    const displayName = (body.querySelector('#userProfileDisplayName') as HTMLInputElement | null)?.value;
-    const preferredLang = (body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null)?.value;
-    try {
-      const catalog = await fetchSubscriptionCatalog();
-      this.renderProfileBody(body, catalog);
-      if (displayName !== undefined) {
-        const nameEl = body.querySelector('#userProfileDisplayName') as HTMLInputElement | null;
-        if (nameEl) nameEl.value = displayName;
-      }
-      if (preferredLang) {
-        const langEl = body.querySelector('#userProfilePreferredLang') as HTMLSelectElement | null;
-        if (langEl) langEl.value = preferredLang;
-      }
-    } catch (err) {
-      this.showProfileError(mapAuthError(err));
-    }
+    await this.refreshProfileSections();
   }
 
   private async handleSubscribe(presetId: string): Promise<void> {
@@ -680,7 +1054,7 @@ export class UserAccountMenu {
         displayName: displayName || null,
         preferredLang,
       });
-      this.showProfileSuccess(t('account.profileSaved'));
+      this.closeProfileModal();
       this.render();
     } catch (err) {
       this.showProfileError(mapAuthError(err));
@@ -690,6 +1064,9 @@ export class UserAccountMenu {
   }
 
   private closeProfileModal(): void {
+    this.apiKeyRevealed = false;
+    this.apiKeyFullText = null;
+    this.apiKeyCreating = false;
     this.profileOverlay?.remove();
     this.profileOverlay = null;
   }

@@ -136,6 +136,74 @@ export async function updateUserProfile(payload: {
   return data.user;
 }
 
+export interface UserApiKeyInfo {
+  hasKey: boolean;
+  apiKey?: string | null;
+  keyPrefix: string | null;
+  expiresAt: string | null;
+  permanent: boolean;
+  createdAt: string | null;
+  expired: boolean;
+}
+
+export const EMPTY_USER_API_KEY: UserApiKeyInfo = {
+  hasKey: false,
+  keyPrefix: null,
+  expiresAt: null,
+  permanent: false,
+  createdAt: null,
+  expired: false,
+};
+
+export async function fetchUserApiKey(): Promise<UserApiKeyInfo> {
+  const resp = await userFetch('/v1/auth/api-key');
+  return parseJson<UserApiKeyInfo>(resp);
+}
+
+export async function revealUserApiKey(): Promise<UserApiKeyInfo & { apiKey: string }> {
+  const resp = await userFetch('/v1/auth/api-key/reveal');
+  return parseJson<UserApiKeyInfo & { apiKey: string }>(resp);
+}
+
+export async function createUserApiKey(opts?: {
+  permanent?: boolean;
+  expiresAt?: string | null;
+}): Promise<UserApiKeyInfo> {
+  const resp = await userFetch('/v1/auth/api-key', {
+    method: 'POST',
+    body: JSON.stringify(opts ?? { permanent: true }),
+  });
+  return parseJson<UserApiKeyInfo>(resp);
+}
+
+export async function rotateUserApiKey(opts?: {
+  permanent?: boolean;
+  expiresAt?: string | null;
+}): Promise<UserApiKeyInfo> {
+  const resp = await userFetch('/v1/auth/api-key/rotate', {
+    method: 'POST',
+    body: JSON.stringify(opts ?? { permanent: true }),
+  });
+  return parseJson<UserApiKeyInfo>(resp);
+}
+
+export async function updateUserApiKeyExpiry(opts: {
+  permanent?: boolean;
+  expiresAt?: string | null;
+}): Promise<UserApiKeyInfo> {
+  const resp = await userFetch('/v1/auth/api-key/expiry', {
+    method: 'PATCH',
+    body: JSON.stringify(opts),
+  });
+  return parseJson<UserApiKeyInfo>(resp);
+}
+
+export async function deleteUserApiKey(): Promise<void> {
+  await parseJson<{ ok: boolean }>(
+    await userFetch('/v1/auth/api-key', { method: 'DELETE' }),
+  );
+}
+
 export async function fetchUserSubscriptions(): Promise<UserSubscriptionSummary[]> {
   const resp = await userFetch('/v1/auth/subscriptions');
   const data = await parseJson<{ subscriptions: UserSubscriptionSummary[] }>(resp);

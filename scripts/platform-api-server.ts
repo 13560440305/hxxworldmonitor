@@ -44,6 +44,7 @@ import {
 import { runSubscriptionMatchPass } from '../server/platform/subscription-matcher.js';
 import { handlePlatformAdminRoutes } from '../server/platform/admin-api.js';
 import { handleUserAuthRoutes } from '../server/platform/user-auth-api.js';
+import { handleOpenApiRoutes } from '../server/platform/open-api-routes.js';
 import {
   createUser,
   getUserByEmail,
@@ -132,6 +133,9 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
 
   try {
     if (await handleUserAuthRoutes(req, res, path, json, readBody)) {
+      return;
+    }
+    if (await handleOpenApiRoutes(req, res, path, json, readBody)) {
       return;
     }
     if (await handlePlatformAdminRoutes(req, res, path, url, json, readBody)) {

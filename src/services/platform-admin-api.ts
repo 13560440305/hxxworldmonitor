@@ -125,6 +125,16 @@ export interface PresetRow {
   sort_order: number;
 }
 
+export interface UserApiKeySummary {
+  hasKey: boolean;
+  keyPrefix: string | null;
+  expiresAt: string | null;
+  permanent: boolean;
+  createdAt: string | null;
+  expired: boolean;
+  revoked?: boolean;
+}
+
 export interface UserRow {
   id: string;
   email: string;
@@ -137,6 +147,7 @@ export interface UserRow {
   disable_permanent: boolean;
   deleted_at: string | null;
   disable_summary?: string;
+  apiKey?: UserApiKeySummary;
 }
 
 export interface WorkspaceSettings {
@@ -423,6 +434,60 @@ export async function resetUserPassword(
       method: 'PATCH',
       body: JSON.stringify(opts),
     }),
+  );
+}
+
+export async function fetchAdminUserApiKey(userId: string): Promise<UserApiKeySummary> {
+  return parseJson<UserApiKeySummary>(await adminFetch(`/v1/admin/users/${userId}/api-key`));
+}
+
+export async function revealAdminUserApiKey(
+  userId: string,
+): Promise<UserApiKeySummary & { apiKey: string }> {
+  return parseJson<UserApiKeySummary & { apiKey: string }>(
+    await adminFetch(`/v1/admin/users/${userId}/api-key/reveal`),
+  );
+}
+
+export async function createAdminUserApiKey(
+  userId: string,
+  opts?: { permanent?: boolean; expiresAt?: string | null },
+): Promise<UserApiKeySummary & { apiKey?: string | null }> {
+  return parseJson<UserApiKeySummary & { apiKey?: string | null }>(
+    await adminFetch(`/v1/admin/users/${userId}/api-key`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? { permanent: true }),
+    }),
+  );
+}
+
+export async function rotateAdminUserApiKey(
+  userId: string,
+  opts?: { permanent?: boolean; expiresAt?: string | null },
+): Promise<UserApiKeySummary & { apiKey?: string | null }> {
+  return parseJson<UserApiKeySummary & { apiKey?: string | null }>(
+    await adminFetch(`/v1/admin/users/${userId}/api-key/rotate`, {
+      method: 'POST',
+      body: JSON.stringify(opts ?? { permanent: true }),
+    }),
+  );
+}
+
+export async function updateAdminUserApiKeyExpiry(
+  userId: string,
+  opts: { permanent?: boolean; expiresAt?: string | null },
+): Promise<UserApiKeySummary> {
+  return parseJson<UserApiKeySummary>(
+    await adminFetch(`/v1/admin/users/${userId}/api-key/expiry`, {
+      method: 'PATCH',
+      body: JSON.stringify(opts),
+    }),
+  );
+}
+
+export async function revokeAdminUserApiKey(userId: string): Promise<void> {
+  await parseJson<{ ok: boolean }>(
+    await adminFetch(`/v1/admin/users/${userId}/api-key`, { method: 'DELETE' }),
   );
 }
 

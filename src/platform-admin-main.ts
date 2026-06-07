@@ -1,8 +1,15 @@
 import './styles/platform-admin.css';
 import { escapeHtml } from '@/utils/sanitize';
 import {
+  bindApiKeyExpiryToggle,
+  defaultApiKeyExpiryLocal,
+  readApiKeyExpiryOptions,
+  toDatetimeLocalValue,
+} from '@/utils/api-key-expiry';
+import {
   clearStoredAdminToken,
   createUser,
+  createAdminUserApiKey,
   deletePreset,
   deleteSubscription,
   loginAdmin,
@@ -10,6 +17,7 @@ import {
   fetchAdminStats,
   createIntegrationProvider,
   deleteIntegrationProvider,
+  fetchAdminUserApiKey,
   fetchIntegrationProviders,
   fetchAiModels,
   fetchLogIndex,
@@ -21,6 +29,10 @@ import {
   getStoredAdminToken,
   isPlatformAdminAvailable,
   resetUserPassword,
+  revealAdminUserApiKey,
+  revokeAdminUserApiKey,
+  rotateAdminUserApiKey,
+  updateAdminUserApiKeyExpiry,
   runDeliverAll,
   runMatchAll,
   runSubscriptionDeliver,
@@ -43,6 +55,7 @@ import {
   type PresetRow,
   type SubscriptionRules,
   type SubscriptionRow,
+  type UserApiKeySummary,
   type UserRow,
   type WorkspaceSettings,
 } from '@/services/platform-admin-api';
@@ -383,12 +396,48 @@ function renderPresetsTable(): string {
   </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
-function toDatetimeLocalValue(iso: string | null): string {
-  if (!iso) return '';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '';
-  const pad = (n: number) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+function readAdminApiKeyExpiry(root: ParentNode): { permanent: boolean; expiresAt: string | null } {
+  return readApiKeyExpiryOptions(root, 'adminApiKeyExpiryMode', 'adminApiKeyExpiresAt', {
+    required: '请设置过期时间',
+    invalid: '过期时间须晚于当前时间',
+  });
+}
+
+function renderAdminApiKeyExpiryFields(showForExistingKey = false, existing?: UserApiKeySummary): string {
+  const useUntil = Boolean(existing?.expiresAt && !existing.expired);
+  const defaultUntil = useUntil && existing?.expiresAt
+    ? toDatetimeLocalValue(existing.expiresAt)
+    : defaultApiKeyExpiryLocal();
+  const saveBtn = showForExistingKey
+    ? `<button type="button" class="pa-btn pa-btn-sm pa-btn-primary" id="adminApiKeySaveExpiryBtn">保存有效期</button>`
+    : '';
+  const hint = showForExistingKey
+    ? '修改有效期后请点击「保存有效期」，无需重新生成 Key'
+    : '';
+  return `
+    <div class="pa-disable-panel pa-api-key-expiry">
+      <label class="pa-muted" style="display:block;margin-bottom:8px">有效期</label>
+      <label class="pa-radio-label">
+        <input type="radio" name="adminApiKeyExpiryMode" value="permanent"${useUntil ? '' : ' checked'} /> 永久有效
+      </label>
+      <label class="pa-radio-label">
+        <input type="radio" name="adminApiKeyExpiryMode" value="until"${useUntil ? ' checked' : ''} /> 指定过期时间
+      </label>
+      <div id="adminApiKeyExpiresAtWrap"${useUntil ? '' : ' hidden'}>
+        <input type="datetime-local" id="adminApiKeyExpiresAt" value="${defaultUntil}" />
+      </div>
+      ${hint ? `<p class="pa-muted" style="margin:8px 0 0">${hint}</p>` : ''}
+      ${saveBtn}
+    </div>`;
+}
+
+function formatAdminApiKeyExpiry(apiKey: UserApiKeySummary): string {
+  if (apiKey.expiresAt) {
+    const when = new Date(apiKey.expiresAt).toLocaleString();
+    if (apiKey.expired) return `已过期 (${when})`;
+    return `过期：${when}`;
+  }
+  return '永久有效';
 }
 
 function userStatusBadge(u: UserRow): string {
@@ -411,6 +460,20 @@ function userSubscriptionSummary(userId: string): string {
   return active === rows.length ? String(active) : `${active}/${rows.length}`;
 }
 
+function modalCloseOnly(): string {
+  return `<button type="button" class="pa-btn" data-cancel>关闭</button>`;
+}
+
+function userApiKeyStatusCell(apiKey?: UserApiKeySummary): string {
+  if (!apiKey) return '<span class="pa-muted">—</span>';
+  if (apiKey.revoked) return '<span class="pa-badge off">已撤销</span>';
+  if (apiKey.expired) return '<span class="pa-badge off">已过期</span>';
+  if (apiKey.hasKey) {
+    return `<code class="pa-mono-sm" title="点击查看/编辑">${escapeHtml(apiKey.keyPrefix ?? 'wmuk_****')}</code>`;
+  }
+  return '<span class="pa-muted">无</span>';
+}
+
 function renderUsersTable(): string {
   const rows = users.map((u) => {
     const subSummary = userSubscriptionSummary(u.id);
@@ -424,19 +487,21 @@ function renderUsersTable(): string {
       <td>${escapeHtml(u.display_name ?? '—')}</td>
       <td>${escapeHtml(formatLangOption(u.preferred_lang ?? 'zh'))}</td>
       <td>${subCell}</td>
+      <td>${userApiKeyStatusCell(u.apiKey)}</td>
       <td>${userStatusBadge(u)}</td>
       <td class="pa-muted">${new Date(u.created_at).toLocaleString()}</td>
       <td class="pa-actions">
         <button class="pa-btn pa-btn-sm" data-view-user-subs="${u.id}" ${subSummary === '0' ? 'disabled' : ''}>订阅</button>
         <button class="pa-btn pa-btn-sm" data-edit-user="${u.id}">编辑</button>
+        <button class="pa-btn pa-btn-sm" data-user-api-key="${u.id}" data-user-email="${escapeHtml(u.email)}">API Key</button>
         ${u.effective_status !== 'deleted' ? `<button class="pa-btn pa-btn-sm" data-reset-pwd="${u.id}" data-user-email="${escapeHtml(u.email)}">重置密码</button>` : ''}
       </td>
     </tr>`;
   }).join('');
-  return `<p class="pa-muted" style="margin-bottom:12px">「订阅」列数字为启用中的订阅数。点击「订阅」可跳转到<strong>用户订阅</strong>页查看并编辑该用户的全部订阅（含前端自助订阅）。</p>
+  return `<p class="pa-muted" style="margin-bottom:12px">「订阅」列为启用中的订阅数；「API Key」用于第三方 Open API 鉴权。点击「API Key」可查看、创建、轮换或撤销。</p>
   <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>订阅</th><th>状态</th><th>注册时间</th><th>操作</th>
-  </tr></thead><tbody>${rows || '<tr><td colspan="8" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
+    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>订阅</th><th>API Key</th><th>状态</th><th>注册时间</th><th>操作</th>
+  </tr></thead><tbody>${rows || '<tr><td colspan="9" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
 }
 
 function renderSettingsPanel(): string {
@@ -1046,6 +1111,13 @@ function bindSectionEvents(): void {
       openResetPasswordModal(id, email);
     });
   });
+  app.querySelectorAll('[data-user-api-key]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.userApiKey!;
+      const email = (el as HTMLElement).dataset.userEmail ?? '';
+      openUserApiKeyModal(id, email);
+    });
+  });
   const logView = document.getElementById('logView');
   if (logView) logView.scrollTop = logView.scrollHeight;
 
@@ -1631,6 +1703,207 @@ function openEditAiModelModal(slug: string): void {
         .then(() => showToast('AI 模型已保存'))
         .catch((e) => showToast(String(e), true));
     }, { onTest: runTest });
+  });
+}
+
+function openUserApiKeyModal(userId: string, email: string): void {
+  let revealed = false;
+  let fullKey: string | null = null;
+  let creating = false;
+
+  function renderApiKeyBody(apiKey: UserApiKeySummary, loadError = ''): string {
+    const expiry = formatAdminApiKeyExpiry(apiKey);
+    const statusBadge = apiKey.expired
+      ? '<span class="pa-badge off">已过期</span>'
+      : apiKey.revoked
+        ? '<span class="pa-badge off">已撤销</span>'
+        : apiKey.hasKey
+          ? '<span class="pa-badge">有效</span>'
+          : '';
+
+    if (loadError) {
+      return `<p class="pa-error">${escapeHtml(loadError)}</p>`;
+    }
+
+    if (!apiKey.hasKey) {
+      return `
+        <p class="pa-muted">该用户尚未创建 API Key。创建后可用于 Open API（Bearer <code>wmuk_…</code>）管理订阅。</p>
+        ${apiKey.revoked ? '<p class="pa-muted">此前密钥已撤销，可重新创建。</p>' : ''}
+        ${apiKey.expired ? '<p class="pa-muted">此前密钥已过期，可重新创建。</p>' : ''}
+        ${renderAdminApiKeyExpiryFields()}
+        <div class="pa-field">
+          <button type="button" class="pa-btn pa-btn-primary" id="adminApiKeyCreateBtn"${creating ? ' disabled' : ''}>${creating ? '创建中…' : '创建 API Key'}</button>
+        </div>`;
+    }
+
+    const masked = apiKey.keyPrefix ?? 'wmuk_****';
+    const displayKey = revealed && fullKey ? fullKey : masked;
+    const viewBtn = revealed
+      ? `<button type="button" class="pa-btn pa-btn-sm" id="adminApiKeyHideBtn">隐藏</button>`
+      : `<button type="button" class="pa-btn pa-btn-sm" id="adminApiKeyViewBtn">查看完整</button>`;
+
+    return `
+      <div class="pa-api-key-panel">
+        <p class="pa-muted">用于第三方系统调用 Open API。完整密钥仅在此显示一次，请妥善保管。</p>
+        <p class="pa-muted">${statusBadge} ${escapeHtml(expiry)}${apiKey.createdAt ? ` · 创建于 ${new Date(apiKey.createdAt).toLocaleString()}` : ''}</p>
+        <div class="pa-api-key-box">
+          <code class="pa-api-key-value${revealed ? ' is-revealed' : ' is-masked'}" id="adminApiKeyValue">${escapeHtml(displayKey)}</code>
+          <p class="pa-muted pa-api-key-hint">${revealed ? '完整密钥已显示，请勿泄露。' : '默认仅显示前缀，点击「查看完整」后可见。'}</p>
+        </div>
+        ${renderAdminApiKeyExpiryFields(true, apiKey)}
+        <div class="pa-api-key-actions">
+          ${viewBtn}
+          <button type="button" class="pa-btn pa-btn-sm" id="adminApiKeyCopyBtn">复制</button>
+          <button type="button" class="pa-btn pa-btn-sm" id="adminApiKeyRotateBtn">重新生成</button>
+          <button type="button" class="pa-btn pa-btn-sm pa-btn-danger" id="adminApiKeyDeleteBtn">撤销</button>
+        </div>
+      </div>`;
+  }
+
+  function wireApiKeyHandlers(root: HTMLElement, refresh: () => void): void {
+    bindApiKeyExpiryToggle(root, 'adminApiKeyExpiryMode', 'adminApiKeyExpiresAt', 'adminApiKeyExpiresAtWrap');
+
+    root.querySelector('#adminApiKeySaveExpiryBtn')?.addEventListener('click', () => {
+      let expiry: { permanent: boolean; expiresAt: string | null };
+      try {
+        expiry = readAdminApiKeyExpiry(root);
+      } catch (e) {
+        showToast(String(e), true);
+        return;
+      }
+      void updateAdminUserApiKeyExpiry(userId, expiry)
+        .then(() => {
+          showToast('有效期已更新');
+          refresh();
+          return reloadSection();
+        })
+        .catch((e) => showToast(String(e), true));
+    });
+
+    root.querySelector('#adminApiKeyCreateBtn')?.addEventListener('click', () => {
+      if (creating) return;
+      let expiry: { permanent: boolean; expiresAt: string | null };
+      try {
+        expiry = readAdminApiKeyExpiry(root);
+      } catch (e) {
+        showToast(String(e), true);
+        return;
+      }
+      creating = true;
+      refresh();
+      void createAdminUserApiKey(userId, expiry)
+        .then((created) => {
+          revealed = true;
+          fullKey = created.apiKey ?? null;
+          creating = false;
+          showToast('API Key 已创建');
+          refresh();
+          return reloadSection();
+        })
+        .catch((e) => {
+          creating = false;
+          showToast(String(e), true);
+          refresh();
+        });
+    });
+
+    root.querySelector('#adminApiKeyViewBtn')?.addEventListener('click', () => {
+      void revealAdminUserApiKey(userId)
+        .then((revealedKey) => {
+          revealed = true;
+          fullKey = revealedKey.apiKey;
+          refresh();
+        })
+        .catch((e) => showToast(String(e), true));
+    });
+
+    root.querySelector('#adminApiKeyHideBtn')?.addEventListener('click', () => {
+      revealed = false;
+      fullKey = null;
+      refresh();
+    });
+
+    root.querySelector('#adminApiKeyCopyBtn')?.addEventListener('click', () => {
+      void (async () => {
+        let text = fullKey?.trim() ?? '';
+        if (!text) {
+          const revealedKey = await revealAdminUserApiKey(userId);
+          text = revealedKey.apiKey?.trim() ?? '';
+          fullKey = text || null;
+          revealed = Boolean(text);
+        }
+        if (!text) {
+          showToast('无可用密钥', true);
+          refresh();
+          return;
+        }
+        try {
+          await navigator.clipboard.writeText(text);
+          showToast('已复制到剪贴板');
+        } catch {
+          showToast('复制失败', true);
+        }
+      })();
+    });
+
+    root.querySelector('#adminApiKeyRotateBtn')?.addEventListener('click', () => {
+      if (!window.confirm('重新生成将使旧密钥立即失效，确定继续？')) return;
+      let expiry: { permanent: boolean; expiresAt: string | null };
+      try {
+        expiry = readAdminApiKeyExpiry(root);
+      } catch (e) {
+        showToast(String(e), true);
+        return;
+      }
+      void rotateAdminUserApiKey(userId, expiry)
+        .then((rotated) => {
+          revealed = true;
+          fullKey = rotated.apiKey ?? null;
+          showToast('API Key 已重新生成');
+          refresh();
+          return reloadSection();
+        })
+        .catch((e) => showToast(String(e), true));
+    });
+
+    root.querySelector('#adminApiKeyDeleteBtn')?.addEventListener('click', () => {
+      if (!window.confirm('撤销后该密钥将无法使用，确定继续？')) return;
+      void revokeAdminUserApiKey(userId)
+        .then(() => {
+          revealed = false;
+          fullKey = null;
+          showToast('API Key 已撤销');
+          refresh();
+          return reloadSection();
+        })
+        .catch((e) => showToast(String(e), true));
+    });
+  }
+
+  openModal(modalShell(`API Key — ${escapeHtml(email)}`, '<p class="pa-muted">加载中…</p>', modalCloseOnly()), (root) => {
+    const bodyEl = root.querySelector('.pa-modal-body') as HTMLElement;
+
+    const refresh = (): void => {
+      void fetchAdminUserApiKey(userId)
+        .then((apiKey) => {
+          bodyEl.innerHTML = renderApiKeyBody(apiKey);
+          wireApiKeyHandlers(root, refresh);
+        })
+        .catch((e) => {
+          bodyEl.innerHTML = renderApiKeyBody({
+            hasKey: false,
+            keyPrefix: null,
+            expiresAt: null,
+            permanent: false,
+            createdAt: null,
+            expired: false,
+          }, String(e));
+          wireApiKeyHandlers(root, refresh);
+        });
+    };
+
+    root.querySelector('[data-cancel]')?.addEventListener('click', () => closeModalFromRoot(root));
+    refresh();
   });
 }
 

@@ -29,6 +29,7 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '016_schema_integration_providers_remarks.sql', optional: true },
   { file: '017_schema_subscription_content_delivery_langs.sql', optional: true },
   { file: '018_schema_brief_source_refs.sql', optional: true },
+  { file: '019_schema_user_api_keys.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {
@@ -165,6 +166,8 @@ async function isMigrationAlreadyApplied(client: pg.Client, filename: string): P
       return jsonbKeyExistsOnAnyRow(client, 'subscription_presets', 'rules_json', 'contentLangs');
     case '018_schema_brief_source_refs.sql':
       return columnExists(client, 'briefs', 'source_refs_json');
+    case '019_schema_user_api_keys.sql':
+      return columnExists(client, 'users', 'api_key_hash');
     default:
       return false;
   }

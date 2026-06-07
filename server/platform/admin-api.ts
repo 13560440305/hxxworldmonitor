@@ -37,6 +37,14 @@ import {
   updateSubscriber,
 } from './user-repository.js';
 import { toAdminUserJson } from './user-account.js';
+import {
+  createUserApiKey,
+  getUserApiKeyMeta,
+  getUserApiKeyWithSecret,
+  revokeUserApiKey,
+  rotateUserApiKey,
+  updateUserApiKeyExpiry,
+} from './user-api-key-service.js';
 import { authenticateAdmin, setSubscriberPassword } from './auth-repository.js';
 import { signSessionToken } from '../_shared/platform-session.js';
 import {
@@ -78,6 +86,23 @@ function checkAdmin(req: IncomingMessage, res: ServerResponse, json: JsonFn): bo
     return false;
   }
   return true;
+}
+
+async function toAdminUserJsonWithApiKey(user: Awaited<ReturnType<typeof getUserById>>): Promise<Record<string, unknown>> {
+  if (!user) return {};
+  const apiKey = await getUserApiKeyMeta(user.id);
+  return { ...toAdminUserJson(user), apiKey };
+}
+
+function mapAdminApiKeyError(err: unknown): { status: number; error: string } {
+  const code = String(err).replace(/^Error:\s*/, '');
+  if (code === 'api_key_already_exists') return { status: 409, error: '该用户已有 API Key' };
+  if (code === 'api_key_not_found') return { status: 404, error: '未找到 API Key' };
+  if (code === 'api_key_storage_not_configured') {
+    return { status: 503, error: '未配置 PLATFORM_JWT_SECRET，无法存储 API Key' };
+  }
+  if (code === 'invalid_expires_at') return { status: 400, error: '无效的过期时间' };
+  return { status: 400, error: code };
 }
 
 /**
@@ -409,13 +434,14 @@ export async function handlePlatformAdminRoutes(
     const includeDeleted = url.searchParams.get('includeDeleted') === 'true';
     if (email) {
       const user = await getUserByEmail(email);
-      json(res, user ? 200 : 404, user ? { user: toAdminUserJson(user) } : { error: 'User not found' });
+      json(res, user ? 200 : 404, user ? { user: await toAdminUserJsonWithApiKey(user) } : { error: 'User not found' });
       return true;
     }
     const users = await listUsers(undefined, { includeDeleted });
+    const usersWithKeys = await Promise.all(users.map((u) => toAdminUserJsonWithApiKey(u)));
     json(res, 200, {
-      users: users.map(toAdminUserJson),
-      count: users.length,
+      users: usersWithKeys,
+      count: usersWithKeys.length,
     });
     return true;
   }
@@ -424,7 +450,7 @@ export async function handlePlatformAdminRoutes(
       && !path.endsWith('/password')) {
     const id = path.split('/').pop()!;
     const user = await getUserById(id);
-    json(res, user ? 200 : 404, user ? { user: toAdminUserJson(user) } : { error: 'User not found' });
+    json(res, user ? 200 : 404, user ? { user: await toAdminUserJsonWithApiKey(user) } : { error: 'User not found' });
     return true;
   }
 
@@ -515,6 +541,118 @@ export async function handlePlatformAdminRoutes(
           : msg,
       });
     }
+    return true;
+  }
+
+  if (/^\/platform\/v1\/admin\/users\/[^/]+\/api-key/.test(path)) {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+
+    const segments = path.split('/');
+    const userId = segments[5]!;
+    const subAction = segments[7];
+
+    const user = await getUserById(userId);
+    if (!user) {
+      json(res, 404, { error: 'User not found' });
+      return true;
+    }
+
+    if (req.method === 'GET' && !subAction) {
+      const key = await getUserApiKeyMeta(userId);
+      json(res, 200, key);
+      return true;
+    }
+
+    if (req.method === 'GET' && subAction === 'reveal') {
+      const key = await getUserApiKeyWithSecret(userId);
+      if (!key.hasKey || !key.apiKey) {
+        json(res, 404, { error: 'api_key_not_found' });
+        return true;
+      }
+      json(res, 200, {
+        hasKey: true,
+        apiKey: key.apiKey,
+        keyPrefix: key.keyPrefix,
+        expiresAt: key.expiresAt,
+        permanent: key.permanent,
+        createdAt: key.createdAt,
+        expired: key.expired,
+      });
+      return true;
+    }
+
+    if (req.method === 'POST' && !subAction) {
+      let body: { permanent?: boolean; expiresAt?: string | null } = {};
+      try {
+        const raw = await readBody(req);
+        if (raw) body = JSON.parse(raw) as typeof body;
+      } catch { /* empty */ }
+      try {
+        const key = await createUserApiKey(userId, body);
+        json(res, 201, {
+          hasKey: key.hasKey,
+          apiKey: key.apiKey,
+          keyPrefix: key.keyPrefix,
+          expiresAt: key.expiresAt,
+          permanent: key.permanent,
+          createdAt: key.createdAt,
+          expired: key.expired,
+        });
+      } catch (err) {
+        const mapped = mapAdminApiKeyError(err);
+        json(res, mapped.status, { error: mapped.error });
+      }
+      return true;
+    }
+
+    if (req.method === 'POST' && subAction === 'rotate') {
+      let body: { permanent?: boolean; expiresAt?: string | null } = {};
+      try {
+        const raw = await readBody(req);
+        if (raw) body = JSON.parse(raw) as typeof body;
+      } catch { /* empty */ }
+      try {
+        const key = await rotateUserApiKey(userId, body);
+        json(res, 200, {
+          hasKey: key.hasKey,
+          apiKey: key.apiKey,
+          keyPrefix: key.keyPrefix,
+          expiresAt: key.expiresAt,
+          permanent: key.permanent,
+          createdAt: key.createdAt,
+          expired: key.expired,
+        });
+      } catch (err) {
+        const mapped = mapAdminApiKeyError(err);
+        json(res, mapped.status, { error: mapped.error });
+      }
+      return true;
+    }
+
+    if (req.method === 'PATCH' && subAction === 'expiry') {
+      let body: { permanent?: boolean; expiresAt?: string | null } = {};
+      try {
+        const raw = await readBody(req);
+        if (raw) body = JSON.parse(raw) as typeof body;
+      } catch { /* empty */ }
+      try {
+        const key = await updateUserApiKeyExpiry(userId, body);
+        json(res, 200, key);
+      } catch (err) {
+        const mapped = mapAdminApiKeyError(err);
+        json(res, mapped.status, { error: mapped.error });
+      }
+      return true;
+    }
+
+    if (req.method === 'DELETE' && !subAction) {
+      await revokeUserApiKey(userId);
+      json(res, 200, { ok: true });
+      return true;
+    }
+
+    json(res, 405, { error: 'Method not allowed' });
     return true;
   }
 
