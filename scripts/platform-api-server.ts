@@ -22,7 +22,7 @@ import {
 } from '../server/platform/research-service.js';
 import { runAllVariantIngest, runRssIngest } from '../server/platform/rss-ingest.js';
 import { runColdTierPass } from '../server/platform/cold-tier-worker.js';
-import { generateAiBrief } from '../server/platform/brief-service.js';
+import { generateAiBrief, parseBriefSourceRefs } from '../server/platform/brief-service.js';
 import { getLatestBrief } from '../server/platform/brief-repository.js';
 import { sendEmail, type SendEmailInput } from '../server/platform/hxxbot-email.js';
 import { runQaSession } from '../server/platform/hxxbot-qa.js';
@@ -59,10 +59,8 @@ import {
   getPlatformLogDir,
   installProcessLogHandlers,
 } from '../server/_shared/platform-logger.js';
-import {
-  isAutoMigrateEnabled,
-  runPlatformDbBootstrap,
-} from '../server/platform/platform-db-bootstrap.js';
+import { isAutoMigrateEnabled } from '../server/platform/platform-db-bootstrap.js';
+import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { refreshHxxbotConfigCache } from '../server/_shared/hxxbot-config.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -148,6 +146,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       json(res, 200, {
         status: db.ok ? 'ok' : 'degraded',
         database: db,
+        autoMigrate: isDatabaseEnabled() ? isAutoMigrateEnabled() : false,
         redis: { enabled: isRedisEnabled() },
         storage: { enabled: isStorageEnabled(), ...storageStatus, ...storageHealth },
         oss: { enabled: isStorageEnabled(), ...storageHealth },
@@ -330,6 +329,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       try {
         let briefBody: string;
         let briefId: string | undefined;
+        let sourceRefs: ReturnType<typeof parseBriefSourceRefs> = [];
+        let deliveryLang = body.lang ?? 'en';
         if (body.generate !== false) {
           const generated = await generateAiBrief({
             variant: body.variant,
@@ -338,10 +339,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           });
           briefBody = generated.brief.body;
           briefId = generated.brief.id;
+          sourceRefs = parseBriefSourceRefs(generated.brief.source_refs_json);
+          deliveryLang = body.lang ?? 'en';
         } else {
           const variant = body.variant ?? 'full';
           const lang = body.lang ?? 'en';
           const mode = body.mode ?? 'brief';
+          deliveryLang = lang;
           const existing = await getLatestBrief({
             briefType: 'world',
             scopeKey: `${variant}:${lang}:${mode}`,
@@ -352,6 +356,7 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           }
           briefBody = existing.body;
           briefId = existing.id;
+          sourceRefs = parseBriefSourceRefs(existing.source_refs_json);
         }
         const subject = body.subject?.trim() || 'World Monitor — AI Brief';
         const sent = await sendBriefEmail({
@@ -360,6 +365,8 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
           briefBody,
           html: body.html,
           briefId,
+          sourceRefs,
+          deliveryLang,
         });
         json(res, 200, { ok: true, briefId, ...sent });
       } catch (err) {
@@ -742,20 +749,11 @@ const server = createServer((req, res) => {
 
 async function startServer(): Promise<void> {
   if (isDatabaseEnabled()) {
-    if (isAutoMigrateEnabled()) {
-      log.info('running database bootstrap (PLATFORM_DB_AUTO_MIGRATE)');
-      try {
-        const bootstrap = await runPlatformDbBootstrap({ logger: log });
-        if (bootstrap.applied.length) {
-          log.info('applied migrations', { files: bootstrap.applied });
-        }
-        await refreshHxxbotConfigCache();
-      } catch (err) {
-        log.error('database bootstrap failed — fix DATABASE_URL or run npm run platform:db:migrate', err);
-        process.exit(1);
-      }
-    } else {
-      log.info('database auto-migrate disabled (PLATFORM_DB_AUTO_MIGRATE=false)');
+    await ensurePlatformDatabaseReady({ logger: log });
+    try {
+      await refreshHxxbotConfigCache();
+    } catch (err) {
+      log.warn('HXXBOT config load from database failed', err);
     }
   }
 

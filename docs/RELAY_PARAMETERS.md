@@ -1,5 +1,7 @@
 # Relay Parameters (Railway + Vercel)
 
+中文架构与部署说明见 [AIS-RSS-RELAY.md](./AIS-RSS-RELAY.md)。
+
 This document covers all environment variables used by the AIS/OpenSky relay path:
 
 - Railway relay process: `scripts/ais-relay.cjs`

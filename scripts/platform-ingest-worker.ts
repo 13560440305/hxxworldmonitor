@@ -4,6 +4,7 @@ loadEnvLocal();
 
 import { closePool, isDatabaseEnabled } from '../server/_shared/db.js';
 import { runAllVariantIngest } from '../server/platform/rss-ingest.js';
+import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { createPlatformLogger, installProcessLogHandlers } from '../server/_shared/platform-logger.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -40,6 +41,8 @@ async function main(): Promise<void> {
     log.error('DATABASE_URL is required');
     process.exit(1);
   }
+
+  await ensurePlatformDatabaseReady({ logger: log });
 
   await tick();
 

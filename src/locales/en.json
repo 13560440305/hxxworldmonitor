@@ -168,6 +168,7 @@
     "verificationCode": "Verification code",
     "displayName": "Display name",
     "preferredLang": "Delivery language",
+    "preferredLangHint": "Language for emails and AI briefs. Can differ from source RSS languages — e.g. English sources with Chinese delivery triggers translation. Saving syncs delivery language on active subscriptions.",
     "loginRequired": "Email and password are required",
     "registerRequired": "Enter email, password, and confirmation (min. 8 characters)",
     "passwordMismatch": "Passwords do not match",

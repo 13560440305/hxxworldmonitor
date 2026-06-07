@@ -3,12 +3,13 @@ import { loadEnvLocal } from '../server/_shared/load-env.js';
 loadEnvLocal();
 
 import { closePool, isDatabaseEnabled } from '../server/_shared/db.js';
-import { isHxxbotConfigured } from '../server/_shared/hxxbot-config.js';
+import { isHxxbotConfigured, refreshHxxbotConfigCache } from '../server/_shared/hxxbot-config.js';
 import { closeRedisClient } from '../server/_shared/redis-client.js';
 import {
   deliverAllEnabledSubscriptions,
   runMatchPassAll,
 } from '../server/platform/subscription-delivery-service.js';
+import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { createPlatformLogger, installProcessLogHandlers } from '../server/_shared/platform-logger.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -51,6 +52,15 @@ async function main(): Promise<void> {
   const once = process.argv.includes('--once');
   const matchOnly = process.argv.includes('--match-only');
   const deliverOnly = process.argv.includes('--deliver-only');
+
+  if (isDatabaseEnabled()) {
+    await ensurePlatformDatabaseReady({ logger: log });
+    try {
+      await refreshHxxbotConfigCache();
+    } catch (err) {
+      log.warn('HXXBOT config load from database failed', err);
+    }
+  }
 
   try {
     if (once) {

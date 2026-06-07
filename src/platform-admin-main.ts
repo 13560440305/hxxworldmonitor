@@ -25,6 +25,7 @@ import {
   runMatchAll,
   runSubscriptionDeliver,
   runSubscriptionMatch,
+  testIntegrationProvider,
   saveIntegrationProvider,
   saveAiModel,
   testAiModel,
@@ -65,6 +66,7 @@ let integrationsPage = 1;
 const INTEGRATIONS_PAGE_SIZE = 10;
 let aiModels: IntegrationProviderRow[] = [];
 let includeDeletedUsers = false;
+let subscriptionFilterUserId: string | null = null;
 let loginError = '';
 let loginLoading = false;
 let toast = '';
@@ -172,10 +174,13 @@ async function reloadSection(): Promise<void> {
     } else if (section === 'presets') {
       presets = await fetchPresets();
     } else if (section === 'users') {
-      users = await fetchUsers(includeDeletedUsers);
+      [users, subscriptions] = await Promise.all([
+        fetchUsers(includeDeletedUsers),
+        fetchSubscriptions(),
+      ]);
     } else if (section === 'subscriptions') {
       [subscriptions, presets, users] = await Promise.all([
-        fetchSubscriptions(),
+        fetchSubscriptions(subscriptionFilterUserId ? { userId: subscriptionFilterUserId } : undefined),
         fetchPresets(),
         fetchUsers(),
       ]);
@@ -280,7 +285,7 @@ function renderShell(content: string): void {
           ${navBtn('overview', '概览')}
           ${navBtn('presets', '可订阅项')}
           ${navBtn('users', '订阅用户')}
-          ${navBtn('subscriptions', '订阅规则')}
+          ${navBtn('subscriptions', '用户订阅')}
           ${navBtn('jobs', '匹配与发信')}
           ${navBtn('logs', '系统日志')}
           ${navBtn('ai-models', 'AI 模型')}
@@ -309,11 +314,13 @@ function renderShell(content: string): void {
       if (sectionLoading) return;
       const next = (el as HTMLElement).dataset.section as Section;
       if (next === section) {
+        if (next === 'subscriptions') subscriptionFilterUserId = null;
         void reloadSection();
         return;
       }
       section = next;
       if (next === 'integrations') integrationsPage = 1;
+      if (next === 'subscriptions') subscriptionFilterUserId = null;
       void reloadSection();
     });
   });
@@ -331,7 +338,7 @@ function sectionTitle(s: Section): string {
     overview: '概览',
     presets: '可订阅项（预设目录）',
     users: '订阅用户',
-    subscriptions: '订阅规则',
+    subscriptions: '用户订阅',
     jobs: '匹配与发信',
     logs: '系统日志',
     'ai-models': 'AI 模型',
@@ -343,6 +350,9 @@ function sectionTitle(s: Section): string {
 
 function renderOverview(): string {
   if (!stats) return '<p class="pa-muted">加载中…</p>';
+  const hxxbotHint = stats.hxxbot.configured
+    ? ''
+    : ' — <button type="button" class="pa-link-btn" data-goto-section="integrations">去配置</button>';
   return `
     <div class="pa-cards">
       <div class="pa-card"><div class="pa-card-label">新闻条目</div><div class="pa-card-value">${stats.newsItems}</div></div>
@@ -350,7 +360,7 @@ function renderOverview(): string {
       <div class="pa-card"><div class="pa-card-label">订阅</div><div class="pa-card-value">${stats.subscriptions}</div></div>
       <div class="pa-card"><div class="pa-card-label">可订阅项</div><div class="pa-card-value">${stats.presetsEnabled}/${stats.presets}</div></div>
     </div>
-    <p>HXXBOT：${stats.hxxbot.configured ? '已配置' : '未配置（无法发邮件）'}</p>
+    <p>HXXBOT：${stats.hxxbot.configured ? '已配置' : '未配置（无法发邮件）'}${hxxbotHint}</p>
     <p class="pa-muted">API：${escapeHtml(stats.hxxbot.apiBaseUrl ?? '—')}</p>
     ${stats.logging ? `<p class="pa-muted">日志目录：${escapeHtml(stats.logging.logDir)}（级别 ${escapeHtml(stats.logging.level)}）</p>` : ''}`;
 }
@@ -394,23 +404,39 @@ function userStatusBadge(u: UserRow): string {
   return `<span class="pa-badge${cls}">${escapeHtml(text)}</span>`;
 }
 
+function userSubscriptionSummary(userId: string): string {
+  const rows = subscriptions.filter((s) => s.user_id === userId);
+  if (!rows.length) return '0';
+  const active = rows.filter((s) => s.enabled).length;
+  return active === rows.length ? String(active) : `${active}/${rows.length}`;
+}
+
 function renderUsersTable(): string {
-  const rows = users.map((u) => `
+  const rows = users.map((u) => {
+    const subSummary = userSubscriptionSummary(u.id);
+    const subCell = subSummary === '0'
+      ? '<span class="pa-muted">0</span>'
+      : `<strong>${escapeHtml(subSummary)}</strong>`;
+    return `
     <tr>
       <td class="pa-muted pa-mono-sm" title="${escapeHtml(u.id)}">${escapeHtml(u.id.slice(0, 8))}…</td>
       <td>${escapeHtml(u.email)}</td>
       <td>${escapeHtml(u.display_name ?? '—')}</td>
       <td>${escapeHtml(formatLangOption(u.preferred_lang ?? 'zh'))}</td>
+      <td>${subCell}</td>
       <td>${userStatusBadge(u)}</td>
       <td class="pa-muted">${new Date(u.created_at).toLocaleString()}</td>
       <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-view-user-subs="${u.id}" ${subSummary === '0' ? 'disabled' : ''}>订阅</button>
         <button class="pa-btn pa-btn-sm" data-edit-user="${u.id}">编辑</button>
         ${u.effective_status !== 'deleted' ? `<button class="pa-btn pa-btn-sm" data-reset-pwd="${u.id}" data-user-email="${escapeHtml(u.email)}">重置密码</button>` : ''}
       </td>
-    </tr>`).join('');
-  return `<div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>状态</th><th>注册时间</th><th>操作</th>
-  </tr></thead><tbody>${rows || '<tr><td colspan="7" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
+    </tr>`;
+  }).join('');
+  return `<p class="pa-muted" style="margin-bottom:12px">「订阅」列数字为启用中的订阅数。点击「订阅」可跳转到<strong>用户订阅</strong>页查看并编辑该用户的全部订阅（含前端自助订阅）。</p>
+  <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>订阅</th><th>状态</th><th>注册时间</th><th>操作</th>
+  </tr></thead><tbody>${rows || '<tr><td colspan="8" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
 }
 
 function renderSettingsPanel(): string {
@@ -454,7 +480,7 @@ function renderSettingsPanel(): string {
 }
 
 const INTEGRATION_CATEGORY_LABELS: Record<string, string> = {
-  platform: 'Platform',
+  platform: 'HXXBOT',
   market: '市场/宏观',
   energy: '能源',
   geo: '地缘/基础设施',
@@ -465,9 +491,134 @@ const INTEGRATION_CATEGORY_LABELS: Record<string, string> = {
   custom: '自定义',
 };
 
-const DATA_INTEGRATION_CATEGORIES = [
-  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay', 'custom',
+const INTEGRATION_CATEGORY_HINTS: Record<string, string> = {
+  platform: '本平台 HXXBOT 自有 API',
+  market: '股票/外汇、宏观指标、国际贸易等经济数据',
+  energy: '油气、电力等能源官方或行业统计',
+  geo: '冲突、互联网基础设施、卫星遥感等地缘信息',
+  military: '军机、防务与 ADS-B 追踪',
+  aviation: '民航航班与 ICAO 航空数据',
+  cyber: '恶意 URL、IP 信誉、威胁情报',
+  relay: '自托管 AIS/RSS/Telegram 等 WebSocket 中继',
+};
+
+const PRESET_INTEGRATION_CATEGORIES = [
+  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay',
 ] as const;
+
+const CUSTOM_CATEGORY_VALUE = '__custom__';
+
+function isPresetIntegrationCategory(category: string): boolean {
+  return (PRESET_INTEGRATION_CATEGORIES as readonly string[]).includes(category);
+}
+
+function integrationCategorySelectOptions(selected: string): string {
+  const presetSelected = isPresetIntegrationCategory(selected);
+  const customSelected = !presetSelected;
+  const presets = PRESET_INTEGRATION_CATEGORIES.map((c) =>
+    `<option value="${c}"${c === selected ? ' selected' : ''}>${escapeHtml(INTEGRATION_CATEGORY_LABELS[c] ?? c)}</option>`,
+  ).join('');
+  return `${presets}<option value="${CUSTOM_CATEGORY_VALUE}"${customSelected ? ' selected' : ''}>自定义…</option>`;
+}
+
+function integrationCategoryCustomFieldHtml(value = '', id = 'int_category_custom'): string {
+  return `<div class="pa-field" id="${id}_wrap">
+    <label>自定义分组名称 *</label>
+    <input id="${id}" autocomplete="off" placeholder="如 内部 API、新闻聚合" value="${escapeHtml(value)}" />
+    <p class="pa-muted">仅用于后台展示与分类，2–64 个字符。</p>
+  </div>`;
+}
+
+function bindIntegrationCategoryToggle(root: HTMLElement, selectId: string, wrapId: string): void {
+  const select = root.querySelector(`#${selectId}`) as HTMLSelectElement | null;
+  const wrap = root.querySelector(`#${wrapId}`) as HTMLElement | null;
+  if (!select || !wrap) return;
+  const sync = () => {
+    wrap.hidden = select.value !== CUSTOM_CATEGORY_VALUE;
+  };
+  select.addEventListener('change', sync);
+  sync();
+}
+
+function readIntegrationCategory(root: HTMLElement, selectId: string, customId: string): string {
+  const select = root.querySelector(`#${selectId}`) as HTMLSelectElement;
+  if (select.value !== CUSTOM_CATEGORY_VALUE) return select.value;
+  const custom = (root.querySelector(`#${customId}`) as HTMLInputElement).value.trim();
+  if (!custom) throw new Error('请填写自定义分组名称');
+  return custom;
+}
+
+function integrationRemarksFieldHtml(value = '', id = 'int_remarks'): string {
+  return `<div class="pa-field">
+    <label>备注</label>
+    <textarea id="${id}" rows="3" maxlength="2000" placeholder="可选，记录用途、账号说明等">${escapeHtml(value)}</textarea>
+  </div>`;
+}
+
+function formatRemarksCell(remarks: string | undefined): string {
+  const t = remarks?.trim() ?? '';
+  if (!t) return '<span class="pa-muted">—</span>';
+  return `<span class="pa-remarks-cell" data-tooltip="${escapeHtml(t)}" aria-label="${escapeHtml(t)}">${escapeHtml(t)}</span>`;
+}
+
+let remarksTooltipEl: HTMLDivElement | null = null;
+
+function hideRemarksTooltip(): void {
+  if (remarksTooltipEl) remarksTooltipEl.hidden = true;
+}
+
+function positionRemarksTooltip(anchor: HTMLElement): void {
+  const tip = remarksTooltipEl;
+  if (!tip || tip.hidden) return;
+  const rect = anchor.getBoundingClientRect();
+  const margin = 8;
+  const gap = 6;
+  let left = rect.left;
+  let top = rect.top - tip.offsetHeight - gap;
+  if (top < margin) top = rect.bottom + gap;
+  if (left + tip.offsetWidth > window.innerWidth - margin) {
+    left = window.innerWidth - tip.offsetWidth - margin;
+  }
+  if (left < margin) left = margin;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
+function showRemarksTooltip(anchor: HTMLElement): void {
+  const text = anchor.dataset.tooltip?.trim();
+  if (!text) return;
+  if (!remarksTooltipEl) {
+    remarksTooltipEl = document.createElement('div');
+    remarksTooltipEl.className = 'pa-remarks-tooltip';
+    remarksTooltipEl.setAttribute('role', 'tooltip');
+    document.body.appendChild(remarksTooltipEl);
+  }
+  remarksTooltipEl.textContent = text;
+  remarksTooltipEl.hidden = false;
+  remarksTooltipEl.style.visibility = 'hidden';
+  positionRemarksTooltip(anchor);
+  remarksTooltipEl.style.visibility = 'visible';
+}
+
+function setupRemarksTooltips(): void {
+  document.addEventListener('mouseover', (e) => {
+    const anchor = (e.target as HTMLElement).closest('.pa-remarks-cell[data-tooltip]') as HTMLElement | null;
+    if (!anchor) return;
+    showRemarksTooltip(anchor);
+  });
+  document.addEventListener('mouseout', (e) => {
+    const anchor = (e.target as HTMLElement).closest('.pa-remarks-cell[data-tooltip]') as HTMLElement | null;
+    if (!anchor) return;
+    const related = e.relatedTarget;
+    if (related instanceof Node && anchor.contains(related)) return;
+    hideRemarksTooltip();
+  });
+  document.addEventListener('scroll', hideRemarksTooltip, true);
+}
+
+function integrationCategoryOptions(selected: string): string {
+  return integrationCategorySelectOptions(selected);
+}
 
 function paginateList<T>(list: T[], page: number, pageSize: number): {
   items: T[];
@@ -522,12 +673,6 @@ function goIntegrationsPage(next: number): void {
   render();
 }
 
-function integrationCategoryOptions(selected: string): string {
-  return DATA_INTEGRATION_CATEGORIES.map((c) =>
-    `<option value="${c}"${c === selected ? ' selected' : ''}>${escapeHtml(INTEGRATION_CATEGORY_LABELS[c] ?? c)}</option>`,
-  ).join('');
-}
-
 function renderIntegrationsPanel(): string {
   if (sectionLoading && !integrationProviders.length) {
     return '<p class="pa-muted">加载中…（启动 platform:api 时会自动创建表与初始数据）</p>';
@@ -541,6 +686,7 @@ function renderIntegrationsPanel(): string {
   const rowOffset = (page - 1) * INTEGRATIONS_PAGE_SIZE;
   const rows = items.map((p, i) => {
     const cat = INTEGRATION_CATEGORY_LABELS[p.category] ?? p.category;
+    const catHint = INTEGRATION_CATEGORY_HINTS[p.category] ?? '';
     const status = p.configured
       ? `<span class="pa-badge">已配置${p.apiKeyHint ? ` ${escapeHtml(p.apiKeyHint)}` : ''}</span>`
       : '<span class="pa-badge off">未配置</span>';
@@ -552,8 +698,9 @@ function renderIntegrationsPanel(): string {
     <tr>
       <td class="pa-muted pa-col-index">${rowOffset + i + 1}</td>
       <td>${escapeHtml(p.displayName)}${customBadge}<div class="pa-muted pa-mono-sm">${escapeHtml(p.slug)}</div></td>
-      <td>${escapeHtml(cat)}</td>
+      <td title="${escapeHtml(catHint)}">${escapeHtml(cat)}</td>
       <td class="pa-muted" title="${escapeHtml(p.baseUrl)}">${escapeHtml(p.baseUrl || '—')}</td>
+      <td>${formatRemarksCell(p.remarks)}</td>
       <td>${status}</td>
       <td>${enabled}</td>
       <td class="pa-actions">
@@ -563,10 +710,10 @@ function renderIntegrationsPanel(): string {
     </tr>`;
   }).join('');
   return `
-    <p class="pa-muted">外部数据 API（HXXBOT、行情、宏观、Relay 等）只需配置 <strong>Base URL</strong> + <strong>API Key</strong>；具体请求路径在代码中写死。可「新增数据源」添加自定义项。AI 摘要请在「AI 模型」页配置。</p>
+    <p class="pa-muted">外部数据 API 按<strong>分组</strong>排列（HXXBOT → 市场/宏观 → 能源 → …）。每项只需配置 <strong>Base URL</strong> + <strong>API Key</strong>；「备注」列说明数据来源与机构，可编辑。AI 摘要请至「AI 模型」。</p>
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-      <th class="pa-col-index">序号</th><th>数据源</th><th>分组</th><th>Base URL</th><th>密钥</th><th>状态</th><th>操作</th>
-    </tr></thead><tbody>${rows || '<tr><td colspan="7" class="pa-muted">暂无数据源</td></tr>'}</tbody></table></div>
+      <th class="pa-col-index">序号</th><th>数据源</th><th>分组</th><th>Base URL</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="8" class="pa-muted">暂无数据源</td></tr>'}</tbody></table></div>
     ${renderTablePagination('integrations', page, totalPages, total, INTEGRATIONS_PAGE_SIZE)}`;
 }
 
@@ -586,6 +733,7 @@ function renderAiModelsPanel(): string {
       <td>${escapeHtml(p.displayName)}<div class="pa-muted pa-mono-sm">${escapeHtml(p.slug)}</div></td>
       <td class="pa-muted" title="${escapeHtml(p.baseUrl)}">${escapeHtml(p.baseUrl || '—')}</td>
       <td class="pa-mono-sm">${escapeHtml(p.modelName || '—')}</td>
+      <td>${formatRemarksCell(p.remarks)}</td>
       <td>${status}</td>
       <td>${enabled}</td>
       <td class="pa-actions">
@@ -596,7 +744,7 @@ function renderAiModelsPanel(): string {
   return `
     <p class="pa-muted">AI 摘要使用 OpenAI 兼容接口（<code>/v1/chat/completions</code>）。每项配置 <strong>Base URL</strong>、<strong>模型名</strong> 与 <strong>API Key</strong>（本地 Ollama / LM Studio 可留空 Key）。摘要链路按 OpenAI 兼容 → Groq → OpenRouter 顺序尝试已启用且已配置的项。</p>
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-      <th>模型提供方</th><th>Base URL</th><th>模型名</th><th>密钥</th><th>状态</th><th>操作</th>
+      <th>模型提供方</th><th>Base URL</th><th>模型名</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
@@ -605,6 +753,14 @@ function deliveryLangOptions(selected = 'zh'): string {
   return langs.map((l) =>
     `<option value="${escapeHtml(l)}"${l === selected ? ' selected' : ''}>${escapeHtml(formatLangOption(l))}</option>`,
   ).join('');
+}
+
+function renderSubscriptionsFilterBar(): string {
+  if (!subscriptionFilterUserId) return '';
+  const u = users.find((x) => x.id === subscriptionFilterUserId);
+  const label = u?.email ?? subscriptionFilterUserId;
+  return `<p class="pa-filter-bar">正在查看用户 <strong>${escapeHtml(label)}</strong> 的订阅（${subscriptions.length} 条）
+    <button type="button" class="pa-link-btn" id="clearSubFilter">显示全部用户</button></p>`;
 }
 
 function renderSubscriptionsTable(): string {
@@ -655,22 +811,34 @@ function renderLogsPanel(): string {
     <pre class="pa-log-view" id="logView">${body}</pre>`;
 }
 
+function presetsSectionHint(): string {
+  return `<p class="pa-section-hint"><strong>可订阅项</strong>是套餐模板（名称 + 默认规则）。用户在前端账户页从这里选择订阅；创建订阅时会将规则<strong>拷贝</strong>到「订阅规则」。停用后不再出现在用户列表，但不影响已有订阅。说明见 <code>docs/订阅与可订阅项说明.md</code>。</p>`;
+}
+
+function subscriptionsSectionHint(): string {
+  return `<p class="pa-section-hint"><strong>用户订阅</strong>列出所有用户的邮件订阅（含前端「我的账户」自助订阅）。可<strong>编辑</strong>规则、启用/停用、<strong>删除</strong>；「匹配」「发信」用于单条试跑。说明见 <code>docs/订阅与可订阅项说明.md</code>。</p>`;
+}
+
+function jobsSectionHint(): string {
+  return `<p class="pa-section-hint"><strong>全量匹配</strong>：按各订阅规则扫描新闻库，写入待推送记录（<code>daily_brief</code> 类订阅跳过）。<strong>全量发信</strong>：通过 HXXBOT 工具 <code>builtin.email_send</code> 发送邮件（需在「数据源配置」启用 HXXBOT 并填写 API Key）。日常可改用 <code>npm run platform:subscription</code> 定时任务。</p>`;
+}
+
 function sectionContent(): string {
   switch (section) {
     case 'overview':
       return renderOverview();
     case 'presets':
-      return `<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newPresetBtn">新建可订阅项</button></div>${renderPresetsTable()}`;
+      return `${presetsSectionHint()}<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newPresetBtn">新建可订阅项</button></div>${renderPresetsTable()}`;
     case 'users':
       return `<div class="pa-toolbar">
         <button class="pa-btn pa-btn-primary" id="newUserBtn">添加用户</button>
         <label class="pa-inline-check"><input type="checkbox" id="includeDeletedUsers" ${includeDeletedUsers ? 'checked' : ''} /> 显示已删除</label>
       </div>${renderUsersTable()}`;
     case 'subscriptions':
-      return `<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newSubBtn">新建订阅</button></div>${renderSubscriptionsTable()}`;
+      return `${subscriptionsSectionHint()}${renderSubscriptionsFilterBar()}<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newSubBtn">新建订阅</button></div>${renderSubscriptionsTable()}`;
     case 'jobs':
       return `
-        <p class="pa-muted">先运行「全量匹配」写入待推送条目，再「全量发信」（需 HXXBOT 已配置）。任务可能耗时数分钟，请耐心等待。</p>
+        ${jobsSectionHint()}
         <div class="pa-toolbar">
           <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '匹配中…' : '全量匹配'}</button>
           <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '发信中…' : '全量发信'}</button>
@@ -755,6 +923,17 @@ function openModal(html: string, onMount: (root: HTMLElement) => void): void {
 }
 
 function bindSectionEvents(): void {
+  app.querySelectorAll('[data-view-user-subs]').forEach((el) => {
+    el.addEventListener('click', () => {
+      subscriptionFilterUserId = (el as HTMLElement).dataset.viewUserSubs ?? null;
+      section = 'subscriptions';
+      void reloadSection();
+    });
+  });
+  document.getElementById('clearSubFilter')?.addEventListener('click', () => {
+    subscriptionFilterUserId = null;
+    void reloadSection();
+  });
   document.getElementById('newPresetBtn')?.addEventListener('click', () => openPresetModal());
   document.getElementById('newUserBtn')?.addEventListener('click', () => openUserModal());
   document.getElementById('newSubBtn')?.addEventListener('click', () => openSubModal());
@@ -814,6 +993,15 @@ function bindSectionEvents(): void {
   document.getElementById('includeDeletedUsers')?.addEventListener('change', (e) => {
     includeDeletedUsers = (e.target as HTMLInputElement).checked;
     void reloadSection();
+  });
+  app.querySelectorAll('[data-goto-section]').forEach((el) => {
+    el.addEventListener('click', () => {
+      if (sectionLoading) return;
+      const next = (el as HTMLElement).dataset.gotoSection as Section;
+      if (!next || next === section) return;
+      section = next;
+      void reloadSection();
+    });
   });
   document.getElementById('newIntegrationBtn')?.addEventListener('click', () => openCreateIntegrationModal());
   app.querySelectorAll('[data-page-nav="integrations"]').forEach((el) => {
@@ -939,6 +1127,7 @@ function rulesFormFields(rules: SubscriptionRules, prefix: string): string {
         </select></div>
     </div>
     <div class="pa-field"><label>数据源语言（点击选择，不选=全部；入库时 RSS 已标记 lang）</label>
+      <p class="pa-muted" style="margin:0 0 8px;font-size:12px">决定从 news_items 匹配哪些语言的 RSS；与下方「订阅语言」可不同（如源=en、投递=zh 时标题会翻译）。</p>
       <div class="pa-chips" id="${prefix}contentLangChips">${contentChips || '<span class="pa-muted">暂无</span>'}</div>
     </div>
     <div class="pa-field"><label>关键词（逗号分隔）</label>
@@ -1159,24 +1348,34 @@ function openCreateIntegrationModal(): void {
     <div class="pa-field"><label>显示名称 *</label>
       <input id="int_new_name" autocomplete="off" placeholder="如 我的行情 API" /></div>
     <div class="pa-field"><label>分组</label>
-      <select id="int_new_category">${integrationCategoryOptions('custom')}</select></div>
+      <select id="int_new_category">${integrationCategorySelectOptions(CUSTOM_CATEGORY_VALUE)}</select></div>
+    ${integrationCategoryCustomFieldHtml('', 'int_new_category_custom')}
     <div class="pa-field"><label>Base URL *</label>
       <input id="int_new_base_url" type="text" inputmode="url" spellcheck="false" autocomplete="off"
         placeholder="https://api.example.com" /></div>
     <div class="pa-field"><label>API Key</label>
       <input id="int_new_api_key" type="password" autocomplete="new-password" placeholder="可选" /></div>
+    ${integrationRemarksFieldHtml('', 'int_new_remarks')}
     <div class="pa-field pa-field-checkbox">
       <label class="pa-checkbox-label">
         <input type="checkbox" id="int_new_enabled" checked /> 启用
       </label>
     </div>
     <p class="pa-muted">自定义数据源仅保存凭证；业务代码需另行接入该 slug。内置数据源由系统自动 seed，无需重复添加。</p>`), (root) => {
+    bindIntegrationCategoryToggle(root, 'int_new_category', 'int_new_category_custom_wrap');
     bindModalActions(root, () => {
       const slug = (root.querySelector('#int_new_slug') as HTMLInputElement).value.trim().toLowerCase();
       const displayName = (root.querySelector('#int_new_name') as HTMLInputElement).value.trim();
-      const category = (root.querySelector('#int_new_category') as HTMLSelectElement).value;
+      let category: string;
+      try {
+        category = readIntegrationCategory(root, 'int_new_category', 'int_new_category_custom');
+      } catch (e) {
+        showToast(String(e), true);
+        return;
+      }
       const baseUrl = (root.querySelector('#int_new_base_url') as HTMLInputElement).value.trim();
       const apiKey = (root.querySelector('#int_new_api_key') as HTMLInputElement).value;
+      const remarks = (root.querySelector('#int_new_remarks') as HTMLTextAreaElement).value;
       const enabled = (root.querySelector('#int_new_enabled') as HTMLInputElement).checked;
 
       void createIntegrationProvider({
@@ -1185,6 +1384,7 @@ function openCreateIntegrationModal(): void {
         category,
         baseUrl,
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
+        remarks,
         enabled,
       })
         .then(() => {
@@ -1198,9 +1398,25 @@ function openCreateIntegrationModal(): void {
   });
 }
 
+function setIntegrationTestResult(root: HTMLElement, kind: 'pending' | 'ok' | 'err', message: string): void {
+  const el = root.querySelector('#int_test_result') as HTMLElement | null;
+  if (!el) return;
+  el.hidden = false;
+  el.className = `pa-test-result pa-test-${kind}`;
+  el.textContent = message;
+}
+
 function openEditIntegrationModal(slug: string): void {
   const provider = integrationProviders.find((p) => p.slug === slug);
   if (!provider) return;
+
+  const isHxxbot = slug === 'hxxbot';
+  const hxxbotNote = isHxxbot
+    ? '<p class="pa-muted">HXXBOT 用于订阅邮件（<code>builtin.email_send</code>）、翻译、QA。Base URL 示例：<code>https://www.hxxbot.com/api</code>（与 hxxnote 桌面版 AI邮件 一致）。凭证保存在数据库。</p>'
+    : '<p class="pa-muted">具体 API 路径在代码中写死；此处只配根 URL 与密钥。</p>';
+  const testResult = isHxxbot
+    ? '<div id="int_test_result" class="pa-test-result" hidden></div>'
+    : '';
 
   const nameField = provider.custom
     ? `<div class="pa-field"><label>显示名称</label>
@@ -1210,8 +1426,14 @@ function openEditIntegrationModal(slug: string): void {
       <p class="pa-muted">仅影响后台展示；内置 slug 不变。</p></div>`;
 
   const categoryField = provider.custom
-    ? `<div class="pa-field"><label>分组</label>
-      <select id="int_category">${integrationCategoryOptions(provider.category)}</select></div>`
+    ? (() => {
+        const preset = isPresetIntegrationCategory(provider.category);
+        const selectValue = preset ? provider.category : CUSTOM_CATEGORY_VALUE;
+        const customValue = preset ? '' : (provider.category === 'custom' ? '' : provider.category);
+        return `<div class="pa-field"><label>分组</label>
+      <select id="int_category">${integrationCategorySelectOptions(selectValue)}</select></div>
+      ${integrationCategoryCustomFieldHtml(customValue, 'int_category_custom')}`;
+      })()
     : `<div class="pa-field"><label>分组</label>
       <input readonly value="${escapeHtml(INTEGRATION_CATEGORY_LABELS[provider.category] ?? provider.category)}" /></div>`;
 
@@ -1237,19 +1459,36 @@ function openEditIntegrationModal(slug: string): void {
         <input type="checkbox" id="int_enabled" ${provider.enabled ? 'checked' : ''} /> 启用
       </label>
     </div>
-    <p class="pa-muted">具体 API 路径在代码中写死；此处只配根 URL 与密钥。</p>`), (root) => {
+    ${integrationRemarksFieldHtml(provider.remarks ?? '', 'int_remarks')}
+    ${testResult}
+    ${hxxbotNote}`, isHxxbot ? modalActionsWithTest() : modalActions()), (root) => {
+    if (provider.custom) {
+      bindIntegrationCategoryToggle(root, 'int_category', 'int_category_custom_wrap');
+    }
     bindModalActions(root, () => {
       const displayName = (root.querySelector('#int_display_name') as HTMLInputElement).value.trim();
       const categoryEl = root.querySelector('#int_category') as HTMLSelectElement | null;
       const baseUrl = (root.querySelector('#int_base_url') as HTMLInputElement).value.trim();
       const apiKey = (root.querySelector('#int_api_key') as HTMLInputElement).value;
+      const remarks = (root.querySelector('#int_remarks') as HTMLTextAreaElement).value;
       const clearApiKey = (root.querySelector('#int_clear_key') as HTMLInputElement).checked;
       const enabled = (root.querySelector('#int_enabled') as HTMLInputElement).checked;
 
+      let categoryPatch: string | undefined;
+      if (categoryEl) {
+        try {
+          categoryPatch = readIntegrationCategory(root, 'int_category', 'int_category_custom');
+        } catch (e) {
+          showToast(String(e), true);
+          return;
+        }
+      }
+
       void saveIntegrationProvider(slug, {
         displayName,
-        ...(categoryEl ? { category: categoryEl.value } : {}),
+        ...(categoryPatch !== undefined ? { category: categoryPatch } : {}),
         baseUrl,
+        remarks,
         ...(apiKey ? { apiKey } : {}),
         enabled,
         ...(clearApiKey ? { clearApiKey: true } : {}),
@@ -1262,7 +1501,22 @@ function openEditIntegrationModal(slug: string): void {
         })
         .then(() => showToast('数据源已保存'))
         .catch((e) => showToast(String(e), true));
-    });
+    }, isHxxbot ? {
+      onTest: () => {
+        const baseUrl = (root.querySelector('#int_base_url') as HTMLInputElement).value.trim();
+        const apiKey = (root.querySelector('#int_api_key') as HTMLInputElement).value;
+        setIntegrationTestResult(root, 'pending', '测试中…');
+        void testIntegrationProvider('hxxbot', { baseUrl, ...(apiKey ? { apiKey } : {}) })
+          .then((r) => {
+            setIntegrationTestResult(
+              root,
+              r.ok ? 'ok' : 'err',
+              r.ok ? `连接成功（${r.latencyMs} ms）` : (r.error ?? '连接失败'),
+            );
+          })
+          .catch((e) => setIntegrationTestResult(root, 'err', String(e)));
+      },
+    } : undefined);
   });
 }
 
@@ -1272,6 +1526,7 @@ function readAiModelForm(root: HTMLElement): {
   apiKey: string;
   clearApiKey: boolean;
   enabled: boolean;
+  remarks: string;
 } {
   return {
     baseUrl: (root.querySelector('#ai_base_url') as HTMLInputElement).value.trim(),
@@ -1279,6 +1534,7 @@ function readAiModelForm(root: HTMLElement): {
     apiKey: (root.querySelector('#ai_api_key') as HTMLInputElement).value,
     clearApiKey: (root.querySelector('#ai_clear_key') as HTMLInputElement).checked,
     enabled: (root.querySelector('#ai_enabled') as HTMLInputElement).checked,
+    remarks: (root.querySelector('#ai_remarks') as HTMLTextAreaElement).value,
   };
 }
 
@@ -1319,6 +1575,7 @@ function openEditAiModelModal(slug: string): void {
         <input type="checkbox" id="ai_enabled" ${provider.enabled ? 'checked' : ''} /> 启用
       </label>
     </div>
+    ${integrationRemarksFieldHtml(provider.remarks ?? '', 'ai_remarks')}
     <div id="ai_test_result" class="pa-test-result" hidden></div>
     <p class="pa-muted">请求路径固定为 <code>/v1/chat/completions</code>。可先「测试连接」验证配置，无需保存。</p>`,
   modalActionsWithTest()), (root) => {
@@ -1360,6 +1617,7 @@ function openEditAiModelModal(slug: string): void {
       void saveAiModel(slug, {
         baseUrl: form.baseUrl,
         modelName: form.modelName,
+        remarks: form.remarks,
         ...(form.apiKey ? { apiKey: form.apiKey } : {}),
         enabled: form.enabled,
         ...(form.clearApiKey ? { clearApiKey: true } : {}),
@@ -1465,6 +1723,8 @@ function openSubModal(existing?: SubscriptionRow): void {
     });
   });
 }
+
+setupRemarksTooltips();
 
 void (async () => {
   render();

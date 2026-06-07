@@ -1,6 +1,9 @@
 import { getDefaultWorkspaceId, query } from '../_shared/db.js';
 import { isHxxbotConfigured } from '../_shared/hxxbot-config.js';
+import type { BriefSourceRef } from './brief-sources.js';
 import { sendEmail, type SendEmailInput } from './hxxbot-email.js';
+import { normalizeLangCode } from './subscription-rules.js';
+import { formatBriefSourcesAppendix } from './brief-sources.js';
 
 export interface NotificationDeliveryRow {
   id: string;
@@ -46,7 +49,7 @@ export async function sendEmailNotification(
   results: Awaited<ReturnType<typeof sendEmail>>['results'];
 }> {
   if (!isHxxbotConfigured()) {
-    throw new Error('HXXBOT 未配置：请在 .env.local 设置 HXXBOT_SITE_URL 与 HXXBOT_API_KEY');
+    throw new Error('HXXBOT 未配置：请在管理后台「数据源配置」中设置 HXXBOT Base URL 与 API Key');
   }
 
   const deliveryId = await createDelivery({
@@ -75,8 +78,20 @@ export async function sendBriefEmail(opts: {
   from_name?: string;
   userId?: string;
   briefId?: string;
+  sourceRefs?: BriefSourceRef[];
+  deliveryLang?: string;
 }): Promise<{ deliveryId: string; sentCount: number }> {
-  const text = opts.briefBody.trim();
+  const baseText = opts.briefBody.trim();
+  const deliveryLang = normalizeLangCode(opts.deliveryLang ?? 'en');
+  let fullText = baseText;
+  let sourcesHtml = '';
+
+  if (opts.sourceRefs?.length) {
+    const appendix = formatBriefSourcesAppendix(opts.sourceRefs, deliveryLang);
+    fullText = baseText + appendix.text;
+    sourcesHtml = appendix.html;
+  }
+
   const payload: SendEmailInput = {
     to: opts.to,
     subject: opts.subject,
@@ -85,15 +100,15 @@ export async function sendBriefEmail(opts: {
   };
 
   if (opts.html !== false) {
-    const escaped = text
+    const escaped = baseText
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
       .replace(/\n/g, '<br>\n');
-    payload.html_body = `<div style="font-family:sans-serif;line-height:1.5">${escaped}</div>`;
-    payload.text = text;
+    payload.html_body = `<div style="font-family:sans-serif;line-height:1.5">${escaped}${sourcesHtml}</div>`;
+    payload.text = fullText;
   } else {
-    payload.text = text;
+    payload.text = fullText;
   }
 
   const result = await sendEmailNotification({

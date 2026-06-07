@@ -41,18 +41,42 @@ export function langsEquivalent(a: string | undefined, b: string | undefined): b
   return normalizeLangCode(a) === normalizeLangCode(b);
 }
 
-/** Language used in subscription emails / translations */
+/** Language used in subscription emails / AI output (user account preference wins). */
 export function resolveDeliveryLang(rules: SubscriptionRules, userPreferredLang?: string): string {
-  return normalizeLangCode(rules.deliveryLang ?? rules.lang ?? userPreferredLang ?? 'en');
+  if (userPreferredLang?.trim()) {
+    return normalizeLangCode(userPreferredLang);
+  }
+  return normalizeLangCode(rules.deliveryLang ?? rules.lang ?? 'en');
 }
 
-/** Source languages to filter news_items.lang; null = no filter */
+/** Source languages to filter news_items.lang; null = no filter (all ingested langs). */
 export function resolveContentLangs(rules: SubscriptionRules): string[] | null {
   if (rules.contentLangs?.length) {
     return [...new Set(rules.contentLangs.map(normalizeLangCode))];
   }
   if (rules.lang?.trim()) return [normalizeLangCode(rules.lang)];
   return null;
+}
+
+export interface ResolvedSubscriptionLangs {
+  deliveryLang: string;
+  /** null = match all source languages in news_items */
+  contentLangs: string[] | null;
+  needsTranslation: boolean;
+}
+
+/** Resolve source vs delivery for matching, briefs, and digest emails. */
+export function resolveSubscriptionLangs(
+  rules: SubscriptionRules,
+  userPreferredLang?: string,
+): ResolvedSubscriptionLangs {
+  const deliveryLang = resolveDeliveryLang(rules, userPreferredLang);
+  const contentLangs = resolveContentLangs(rules);
+  const needsTranslation = Boolean(
+    contentLangs?.length
+    && !contentLangs.some((c) => langsEquivalent(c, deliveryLang)),
+  );
+  return { deliveryLang, contentLangs, needsTranslation };
 }
 
 export function normalizeRulesFromRaw(raw: unknown): SubscriptionRules {
@@ -144,9 +168,8 @@ export const MODE_OPTIONS = [
   { value: 'keyword', label: '关键词/分类匹配' },
 ] as const;
 
-export function describeRulesLang(rules: SubscriptionRules): string {
-  const delivery = resolveDeliveryLang(rules);
-  const content = resolveContentLangs(rules);
-  if (content?.length) return `源:${content.join('+')}→${delivery}`;
-  return `订阅语言:${delivery}`;
+export function describeRulesLang(rules: SubscriptionRules, userPreferredLang?: string): string {
+  const { deliveryLang, contentLangs } = resolveSubscriptionLangs(rules, userPreferredLang);
+  if (contentLangs?.length) return `源:${contentLangs.join('+')}→${deliveryLang}`;
+  return `全部源→${deliveryLang}`;
 }

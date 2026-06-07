@@ -23,7 +23,7 @@
 | `self_service_subscriptions_enabled` | BOOLEAN DEFAULT true | 总开关：关闭后 API 拒绝 POST/DELETE |
 | `max_subscriptions_per_user` | INT DEFAULT 0 | 订阅上限；0 = 不限制 |
 
-单项启用/禁用：继续用 `subscription_presets.enabled`（Admin「可订阅项」）。
+单项启用/禁用：继续用 `subscription_presets.enabled`（Admin「可订阅项」）。概念说明见 [订阅与可订阅项说明.md](./订阅与可订阅项说明.md)。
 
 ### 用户 API
 

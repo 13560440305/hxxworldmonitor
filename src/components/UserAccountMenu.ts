@@ -568,6 +568,7 @@ export class UserAccountMenu {
           <span>${escapeHtml(t('account.preferredLang'))}</span>
           <select id="userProfilePreferredLang">${deliveryLangOptions(this.user.preferred_lang || 'zh')}</select>
         </label>
+        <p class="wm-user-muted wm-user-field-hint">${escapeHtml(t('account.preferredLangHint'))}</p>
         <p class="wm-user-error" id="userProfileError" hidden></p>
         <p class="wm-user-success" id="userProfileSuccess" hidden></p>
       </section>

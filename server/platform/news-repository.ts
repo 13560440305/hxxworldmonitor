@@ -116,6 +116,7 @@ export async function listRecentNews(opts: {
   workspaceId?: string;
   variant?: string;
   lang?: string;
+  langs?: string[];
   category?: string;
   limit?: number;
   hours?: number;
@@ -136,9 +137,15 @@ export async function listRecentNews(opts: {
     params.push(opts.variant);
     sql += ` AND variant = $${params.length}`;
   }
-  if (opts.lang) {
-    params.push(opts.lang);
+  const langFilter = opts.langs?.length
+    ? [...new Set(opts.langs.map((l) => l.trim()).filter(Boolean))]
+    : (opts.lang?.trim() ? [opts.lang.trim()] : []);
+  if (langFilter.length === 1) {
+    params.push(langFilter[0]);
     sql += ` AND lang = $${params.length}`;
+  } else if (langFilter.length > 1) {
+    params.push(langFilter);
+    sql += ` AND lang = ANY($${params.length}::text[])`;
   }
   if (opts.category) {
     params.push(opts.category);

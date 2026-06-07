@@ -17,6 +17,7 @@ export interface IntegrationProviderRow {
   enabled: boolean;
   sort_order: number;
   is_custom: boolean;
+  remarks: string;
 }
 
 export interface IntegrationProviderPublic {
@@ -31,6 +32,7 @@ export interface IntegrationProviderPublic {
   configured: boolean;
   sortOrder: number;
   custom: boolean;
+  remarks: string;
 }
 
 export interface ResolvedIntegrationProvider {
@@ -76,6 +78,12 @@ export const DATA_INTEGRATION_CATEGORIES = [
 
 export type DataIntegrationCategory = typeof DATA_INTEGRATION_CATEGORIES[number];
 
+function normalizeRemarks(raw: string | null | undefined): string {
+  const t = (raw ?? '').trim();
+  if (t.length > 2000) throw new Error('备注不能超过 2000 个字符');
+  return t;
+}
+
 function rowToPublic(row: IntegrationProviderRow): IntegrationProviderPublic {
   const def = getProviderDefinition(row.slug);
   const dbKey = decryptSettingValue(row.api_key_enc) ?? '';
@@ -96,6 +104,7 @@ function rowToPublic(row: IntegrationProviderRow): IntegrationProviderPublic {
       : Boolean(baseUrl && dbKey) || (def?.apiKeyOptional && Boolean(baseUrl)),
     sortOrder: row.sort_order,
     custom: Boolean(row.is_custom),
+    remarks: row.remarks?.trim() || def?.defaultRemarks || '',
   };
 }
 
@@ -109,9 +118,17 @@ function validateCustomSlug(slug: string): void {
   }
 }
 
-function validateDataCategory(category: string): void {
-  if (!DATA_INTEGRATION_CATEGORIES.includes(category as DataIntegrationCategory)) {
-    throw new Error('无效分组');
+function validateCustomProviderCategory(category: string): void {
+  const c = category.trim();
+  if (!c) throw new Error('请填写分组');
+  if ((DATA_INTEGRATION_CATEGORIES as readonly string[]).includes(c) && c !== 'custom') {
+    return;
+  }
+  if (c === 'custom') {
+    throw new Error('请填写自定义分组名称');
+  }
+  if (c.length < 2 || c.length > 64) {
+    throw new Error('自定义分组名称须为 2–64 个字符');
   }
 }
 
@@ -121,15 +138,38 @@ export async function ensureIntegrationProviderSeeds(workspaceId?: string): Prom
   for (const p of INTEGRATION_PROVIDER_CATALOG) {
     const res = await query(
       `INSERT INTO integration_providers
-         (workspace_id, slug, display_name, category, base_url, model_name, enabled, sort_order)
-       VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7)
+         (workspace_id, slug, display_name, category, base_url, model_name, enabled, sort_order, remarks)
+       VALUES ($1, $2, $3, $4, $5, $6, TRUE, $7, $8)
        ON CONFLICT (workspace_id, slug) DO NOTHING`,
-      [ws, p.slug, p.displayName, p.category, p.defaultBaseUrl, p.defaultModel ?? null, p.sortOrder],
+      [ws, p.slug, p.displayName, p.category, p.defaultBaseUrl, p.defaultModel ?? null, p.sortOrder, p.defaultRemarks ?? ''],
     );
     inserted += res.rowCount ?? 0;
+
+    if (p.defaultRemarks) {
+      await query(
+        `UPDATE integration_providers SET remarks = $3, updated_at = NOW()
+         WHERE workspace_id = $1 AND slug = $2 AND is_custom = FALSE
+           AND COALESCE(TRIM(remarks), '') = ''`,
+        [ws, p.slug, p.defaultRemarks],
+      );
+    }
   }
   return inserted;
 }
+
+const CATEGORY_SORT_SQL = `
+  CASE category
+    WHEN 'platform' THEN 1
+    WHEN 'market' THEN 2
+    WHEN 'energy' THEN 3
+    WHEN 'geo' THEN 4
+    WHEN 'military' THEN 5
+    WHEN 'aviation' THEN 6
+    WHEN 'cyber' THEN 7
+    WHEN 'relay' THEN 8
+    WHEN 'ai' THEN 9
+    ELSE 99
+  END`;
 
 export async function listIntegrationProvidersPublic(
   workspaceId?: string,
@@ -138,9 +178,9 @@ export async function listIntegrationProvidersPublic(
   const ws = workspaceId ?? getDefaultWorkspaceId();
   await ensureIntegrationProviderSeeds(ws);
   const res = await query<IntegrationProviderRow>(
-    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom
+    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom, remarks
      FROM integration_providers WHERE workspace_id = $1
-     ORDER BY sort_order ASC, display_name ASC`,
+     ORDER BY ${CATEGORY_SORT_SQL}, sort_order ASC, display_name ASC`,
     [ws],
   );
   const rows = res.rows.map((row) => rowToPublic(row));
@@ -156,7 +196,7 @@ export async function getIntegrationProvider(
   const ws = workspaceId ?? getDefaultWorkspaceId();
   await ensureIntegrationProviderSeeds(ws);
   const res = await query<IntegrationProviderRow>(
-    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom
+    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom, remarks
      FROM integration_providers WHERE workspace_id = $1 AND slug = $2`,
     [ws, slug],
   );
@@ -209,13 +249,14 @@ export async function createCustomIntegrationProvider(
     baseUrl: string;
     apiKey?: string;
     enabled?: boolean;
+    remarks?: string;
   },
   workspaceId?: string,
 ): Promise<IntegrationProviderPublic> {
   const ws = workspaceId ?? getDefaultWorkspaceId();
   const slug = input.slug.trim().toLowerCase();
   validateCustomSlug(slug);
-  validateDataCategory(input.category.trim());
+  validateCustomProviderCategory(input.category.trim());
 
   const displayName = input.displayName.trim();
   if (!displayName) throw new Error('请填写显示名称');
@@ -239,12 +280,13 @@ export async function createCustomIntegrationProvider(
   const apiKeyEnc = input.apiKey?.trim()
     ? encryptSettingValue(input.apiKey.trim())
     : null;
+  const remarks = normalizeRemarks(input.remarks);
 
   await query(
     `INSERT INTO integration_providers
-       (workspace_id, slug, display_name, category, base_url, api_key_enc, enabled, sort_order, is_custom)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE)`,
-    [ws, slug, displayName, input.category.trim(), baseUrl, apiKeyEnc, input.enabled !== false, sortOrder],
+       (workspace_id, slug, display_name, category, base_url, api_key_enc, enabled, sort_order, is_custom, remarks)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)`,
+    [ws, slug, displayName, input.category.trim(), baseUrl, apiKeyEnc, input.enabled !== false, sortOrder, remarks],
   );
 
   invalidateIntegrationProviderCache();
@@ -260,7 +302,7 @@ export async function deleteCustomIntegrationProvider(
 ): Promise<boolean> {
   const ws = workspaceId ?? getDefaultWorkspaceId();
   const existing = await query<IntegrationProviderRow>(
-    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom
+    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom, remarks
      FROM integration_providers WHERE workspace_id = $1 AND slug = $2`,
     [ws, slug],
   );
@@ -285,6 +327,7 @@ export async function updateIntegrationProvider(
     modelName?: string | null;
     enabled?: boolean;
     clearApiKey?: boolean;
+    remarks?: string;
   },
   workspaceId?: string,
 ): Promise<IntegrationProviderPublic | null> {
@@ -292,7 +335,7 @@ export async function updateIntegrationProvider(
   await ensureIntegrationProviderSeeds(ws);
 
   const existing = await query<IntegrationProviderRow>(
-    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom
+    `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom, remarks
      FROM integration_providers WHERE workspace_id = $1 AND slug = $2`,
     [ws, slug],
   );
@@ -306,7 +349,7 @@ export async function updateIntegrationProvider(
     if (!row.is_custom) {
       throw new Error('内置数据源不可修改分组');
     }
-    validateDataCategory(patch.category.trim());
+    validateCustomProviderCategory(patch.category.trim());
   }
 
   const displayName = patch.displayName !== undefined
@@ -326,6 +369,7 @@ export async function updateIntegrationProvider(
   } else if (patch.apiKey !== undefined && patch.apiKey.trim()) {
     apiKeyEnc = encryptSettingValue(patch.apiKey.trim());
   }
+  const remarks = patch.remarks !== undefined ? normalizeRemarks(patch.remarks) : (row.remarks ?? '');
 
   await query(
     `UPDATE integration_providers SET
@@ -335,9 +379,10 @@ export async function updateIntegrationProvider(
        api_key_enc = $6,
        model_name = $7,
        enabled = $8,
+       remarks = $9,
        updated_at = NOW()
      WHERE workspace_id = $1 AND slug = $2`,
-    [ws, slug, displayName, category, baseUrl, apiKeyEnc, modelName, enabled],
+    [ws, slug, displayName, category, baseUrl, apiKeyEnc, modelName, enabled, remarks],
   );
 
   invalidateIntegrationProviderCache();

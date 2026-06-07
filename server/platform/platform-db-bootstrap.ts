@@ -26,6 +26,9 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '013_schema_integration_providers.sql', optional: true },
   { file: '014_schema_integration_providers_model.sql', optional: true },
   { file: '015_schema_integration_providers_custom.sql', optional: true },
+  { file: '016_schema_integration_providers_remarks.sql', optional: true },
+  { file: '017_schema_subscription_content_delivery_langs.sql', optional: true },
+  { file: '018_schema_brief_source_refs.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {
@@ -109,6 +112,20 @@ async function indexExists(client: pg.Client, indexName: string): Promise<boolea
   return (res.rowCount ?? 0) > 0;
 }
 
+async function jsonbKeyExistsOnAnyRow(
+  client: pg.Client,
+  table: string,
+  jsonColumn: string,
+  key: string,
+): Promise<boolean> {
+  if (!(await tableExists(client, table))) return false;
+  const res = await client.query(
+    `SELECT 1 FROM ${table} WHERE ${jsonColumn} ? $1 LIMIT 1`,
+    [key],
+  );
+  return (res.rowCount ?? 0) > 0;
+}
+
 /** Detect migrations applied manually before schema_migrations ledger existed. */
 async function isMigrationAlreadyApplied(client: pg.Client, filename: string): Promise<boolean> {
   switch (filename) {
@@ -142,6 +159,12 @@ async function isMigrationAlreadyApplied(client: pg.Client, filename: string): P
       return columnExists(client, 'integration_providers', 'model_name');
     case '015_schema_integration_providers_custom.sql':
       return columnExists(client, 'integration_providers', 'is_custom');
+    case '016_schema_integration_providers_remarks.sql':
+      return columnExists(client, 'integration_providers', 'remarks');
+    case '017_schema_subscription_content_delivery_langs.sql':
+      return jsonbKeyExistsOnAnyRow(client, 'subscription_presets', 'rules_json', 'contentLangs');
+    case '018_schema_brief_source_refs.sql':
+      return columnExists(client, 'briefs', 'source_refs_json');
     default:
       return false;
   }

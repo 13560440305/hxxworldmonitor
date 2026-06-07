@@ -54,6 +54,7 @@ import {
 import { isAiProviderSlug } from './integration-provider-catalog.js';
 import { testAiModelConnection } from './ai-model-test-service.js';
 import { refreshHxxbotConfigCache } from '../_shared/hxxbot-config.js';
+import { testHxxbotConnection } from './hxxbot-test-service.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -261,6 +262,27 @@ export async function handlePlatformAdminRoutes(
     return true;
   }
 
+  const testIntegrationMatch = path.match(/^\/platform\/v1\/admin\/integrations\/([^/]+)\/test$/);
+  if (req.method === 'POST' && testIntegrationMatch) {
+    const slug = testIntegrationMatch[1]!;
+    if (slug !== 'hxxbot') {
+      json(res, 404, { error: '该数据源暂不支持测试连接' });
+      return true;
+    }
+    let body: { baseUrl?: string; apiKey?: string } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const result = await testHxxbotConnection(body);
+      json(res, result.ok ? 200 : 422, result);
+    } catch (err) {
+      json(res, 500, { ok: false, latencyMs: 0, error: String(err) });
+    }
+    return true;
+  }
+
   if (req.method === 'GET' && path === '/platform/v1/admin/integrations') {
     const providers = await listIntegrationProvidersPublic(undefined, 'data');
     json(res, 200, { providers, total: providers.length });
@@ -275,6 +297,7 @@ export async function handlePlatformAdminRoutes(
       baseUrl?: string;
       apiKey?: string;
       enabled?: boolean;
+      remarks?: string;
     } = {};
     try {
       const raw = await readBody(req);
@@ -288,6 +311,7 @@ export async function handlePlatformAdminRoutes(
         baseUrl: body.baseUrl ?? '',
         apiKey: body.apiKey,
         enabled: body.enabled,
+        remarks: body.remarks,
       });
       json(res, 201, { provider });
     } catch (err) {
@@ -355,6 +379,7 @@ export async function handlePlatformAdminRoutes(
       modelName?: string;
       enabled?: boolean;
       clearApiKey?: boolean;
+      remarks?: string;
     } = {};
     try {
       const raw = await readBody(req);
@@ -369,6 +394,7 @@ export async function handlePlatformAdminRoutes(
         modelName: body.modelName,
         enabled: body.enabled,
         clearApiKey: body.clearApiKey,
+        remarks: body.remarks,
       });
       if (slug === 'hxxbot') await refreshHxxbotConfigCache();
       json(res, provider ? 200 : 404, provider ? { provider } : { error: 'Provider not found' });

@@ -60,20 +60,15 @@ GRANT ALL ON SCHEMA public TO postgres;
 
 ### 步骤 4：数据库结构（自动迁移）
 
-**推荐**：只创建空库（步骤 3），启动 `platform:api` 时会**自动执行迁移**（`PLATFORM_DB_AUTO_MIGRATE` 默认开启）。
+**推荐**：只创建空库（步骤 3），之后**无需手动跑 migrate**——启动任意 Platform 后台进程时会自动检测并应用新迁移：
 
 ```powershell
-npm run platform:api
+npm run platform:api   # 或 platform:ingest / platform:subscription 等
 ```
 
-日志中会出现 `database bootstrap complete`；新版本 SQL 会在启动时按 `schema_migrations` 表增量应用。
+日志示例：`checking database schema (auto-migrate on startup)…` → `applied new database migrations` 或 `database schema up to date`。
 
-手动迁移（可选，与启动时逻辑相同）：
-
-```powershell
-npm run platform:db:migrate
-# 或首次全量：npm run platform:db:init
-```
+`npm run platform:db:migrate` 仅用于 CI/调试，与启动时逻辑相同。
 
 关闭自动迁移：`.env.local` 设置 `PLATFORM_DB_AUTO_MIGRATE=false`
 
@@ -108,7 +103,7 @@ npm run dev
 | 命令 | 说明 |
 |------|------|
 | `npm run platform:db:init` | 初始化 schema（首次） |
-| `npm run platform:db:migrate` | 增量迁移（pgvector + Phase 2 索引，可重复执行） |
+| `npm run platform:db:migrate` | 手动触发迁移（可选；平时重启 `platform:api` 即可自动应用） |
 | `npm run platform:ingest:once` | 采集一轮 RSS |
 | `npm run platform:ingest` | 定时采集（10 分钟） |
 | `npm run platform:api` | REST API (:8787) |
@@ -241,7 +236,7 @@ npm run preview
 
 ### 管理后台
 
-1. 迁移：`npm run platform:db:migrate`（含用户角色 `admin` / `user`）
+1. 启动 `npm run platform:api`（自动迁移 + 建表；含用户角色 `admin` / `user`）
 2. `.env.local` 配置管理员账号：
    ```env
    PLATFORM_ADMIN_EMAIL=admin@localhost
@@ -331,7 +326,7 @@ Platform 各进程将日志写入 **`logs/{服务名}/{YYYY-MM-DD}.log`**（项�
 
 ### Phase 2 — AI Research API
 
-前置：`npm run platform:db:migrate` → `npm run platform:embed:once`（需 pgvector + 新闻已入库）
+前置：重启 `platform:api` 或 `platform:ingest` 以自动迁移 → `npm run platform:embed:once`（需 pgvector + 新闻已入库）
 
 | 方法 | 路径 |
 |------|------|

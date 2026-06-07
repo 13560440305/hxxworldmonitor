@@ -264,6 +264,20 @@ export interface IntegrationProviderRow {
   configured: boolean;
   sortOrder: number;
   custom: boolean;
+  remarks: string;
+}
+
+export async function testIntegrationProvider(
+  slug: string,
+  draft: { baseUrl?: string; apiKey?: string } = {},
+): Promise<{ ok: boolean; latencyMs: number; error?: string; httpStatus?: number }> {
+  return parseJson(
+    await adminFetch(`/v1/admin/integrations/${slug}/test`, {
+      method: 'POST',
+      body: JSON.stringify(draft),
+    }),
+    200_000,
+  );
 }
 
 export async function fetchIntegrationProviders(): Promise<IntegrationProviderRow[]> {
@@ -290,6 +304,7 @@ export async function saveIntegrationProvider(
     modelName?: string;
     enabled?: boolean;
     clearApiKey?: boolean;
+    remarks?: string;
   },
 ): Promise<IntegrationProviderRow> {
   const body: Record<string, unknown> = {};
@@ -300,6 +315,7 @@ export async function saveIntegrationProvider(
   if (patch.modelName !== undefined) body.modelName = patch.modelName;
   if (patch.enabled !== undefined) body.enabled = patch.enabled;
   if (patch.clearApiKey) body.clearApiKey = true;
+  if (patch.remarks !== undefined) body.remarks = patch.remarks;
   const data = await parseJson<{ provider: IntegrationProviderRow }>(
     await adminFetch(`/v1/admin/integrations/${slug}`, {
       method: 'PATCH',
@@ -316,6 +332,7 @@ export async function createIntegrationProvider(input: {
   baseUrl: string;
   apiKey?: string;
   enabled?: boolean;
+  remarks?: string;
 }): Promise<IntegrationProviderRow> {
   const data = await parseJson<{ provider: IntegrationProviderRow }>(
     await adminFetch('/v1/admin/integrations', {
@@ -332,7 +349,7 @@ export async function deleteIntegrationProvider(slug: string): Promise<void> {
 
 export async function saveAiModel(
   slug: string,
-  patch: { baseUrl?: string; apiKey?: string; modelName?: string; enabled?: boolean; clearApiKey?: boolean },
+  patch: { baseUrl?: string; apiKey?: string; modelName?: string; enabled?: boolean; clearApiKey?: boolean; remarks?: string },
 ): Promise<IntegrationProviderRow> {
   const body: Record<string, unknown> = {};
   if (patch.baseUrl !== undefined) body.baseUrl = patch.baseUrl;
@@ -340,6 +357,7 @@ export async function saveAiModel(
   if (patch.modelName !== undefined) body.modelName = patch.modelName;
   if (patch.enabled !== undefined) body.enabled = patch.enabled;
   if (patch.clearApiKey) body.clearApiKey = true;
+  if (patch.remarks !== undefined) body.remarks = patch.remarks;
   const data = await parseJson<{ provider: IntegrationProviderRow }>(
     await adminFetch(`/v1/admin/ai-models/${slug}`, {
       method: 'PATCH',
@@ -433,9 +451,10 @@ export async function updateUser(
   return data.user;
 }
 
-export async function fetchSubscriptions(): Promise<SubscriptionRow[]> {
+export async function fetchSubscriptions(opts?: { userId?: string }): Promise<SubscriptionRow[]> {
+  const qs = opts?.userId ? `?userId=${encodeURIComponent(opts.userId)}` : '';
   const data = await parseJson<{ subscriptions: SubscriptionRow[] }>(
-    await adminFetch('/v1/admin/subscriptions'),
+    await adminFetch(`/v1/admin/subscriptions${qs}`),
   );
   return data.subscriptions;
 }

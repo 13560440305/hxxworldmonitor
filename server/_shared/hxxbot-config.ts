@@ -37,13 +37,37 @@ export function invalidateHxxbotConfigCache(): void {
 }
 
 /**
+ * Open API root — align with hxxnote/desktop (default https://www.hxxbot.com/api).
+ * If admin pasted site root https://www.hxxbot.com, append /api automatically.
+ */
+export function normalizeHxxbotApiBaseUrl(url: string): string {
+  const trimmed = url.trim().replace(/\/+$/, '');
+  if (!trimmed) return trimmed;
+  try {
+    const parsed = new URL(trimmed);
+    const host = parsed.hostname.toLowerCase();
+    const isHxxbot = host === 'hxxbot.com' || host === 'www.hxxbot.com';
+    if (!isHxxbot) return trimmed;
+    const path = parsed.pathname.replace(/\/+$/, '') || '';
+    if (!path || path === '' || path.startsWith('/skills')) {
+      return `${parsed.origin}/api`;
+    }
+  } catch {
+    // keep trimmed
+  }
+  return trimmed;
+}
+
+function resolvedApiBaseUrl(): string | undefined {
+  if (!cachedProvider?.enabled || !cachedProvider.baseUrl) return undefined;
+  return normalizeHxxbotApiBaseUrl(cachedProvider.baseUrl);
+}
+
+/**
  * Resolve Open API base URL — from DB integration_providers only.
  */
 export function resolveHxxbotApiBaseUrl(): string | undefined {
-  if (cachedProvider?.enabled && cachedProvider.baseUrl) {
-    return cachedProvider.baseUrl.replace(/\/+$/, '');
-  }
-  return undefined;
+  return resolvedApiBaseUrl();
 }
 
 export interface HxxbotConfig {
@@ -60,7 +84,7 @@ export function getHxxbotConfig(opts?: { requireKey?: boolean }): HxxbotConfig {
     );
   }
 
-  const apiBaseUrl = cachedProvider.baseUrl.replace(/\/+$/, '');
+  const apiBaseUrl = resolvedApiBaseUrl()!;
   const apiKey = cachedProvider.apiKey ?? '';
   if (requireKey && !apiKey) {
     throw new HxxbotConfigError(
@@ -88,13 +112,11 @@ export function getHxxbotPublicStatus(): {
   toolVersion: string | null;
   source: 'db' | null;
 } {
-  const apiBaseUrl = (cachedProvider?.enabled && cachedProvider.baseUrl)
-    ? cachedProvider.baseUrl.replace(/\/+$/, '')
-    : null;
+  const apiBaseUrl = resolvedApiBaseUrl();
   const hasApiKey = Boolean(cachedProvider?.enabled && cachedProvider.apiKey);
   return {
     configured: Boolean(apiBaseUrl && hasApiKey && cachedProvider?.enabled !== false),
-    apiBaseUrl,
+    apiBaseUrl: apiBaseUrl ?? null,
     hasApiKey,
     toolVersion: process.env.HXXBOT_TOOL_VERSION?.trim() || null,
     source: hasApiKey ? 'db' : null,

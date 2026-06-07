@@ -1,5 +1,6 @@
 import { isHxxbotConfigured } from '../_shared/hxxbot-config.js';
-import { generateAiBrief } from './brief-service.js';
+import { formatAiBriefEmailSections } from './brief-sources.js';
+import { generateAiBrief, parseBriefSourceRefs } from './brief-service.js';
 import { sendBriefEmail, sendEmailNotification } from './notification-service.js';
 import {
   listPendingMatches,
@@ -12,7 +13,11 @@ import {
   type SubscriptionRules,
   type SubscriptionWithUser,
 } from './subscription-repository.js';
-import { resolveDeliveryLang, describeRulesLang } from './subscription-rules.js';
+import {
+  describeRulesLang,
+  normalizeLangCode,
+  resolveSubscriptionLangs,
+} from './subscription-rules.js';
 import { resolveHeadlinesForDelivery } from './translation-service.js';
 import { getUserById } from './user-repository.js';
 import { isSubscriberLoginAllowed } from './user-account.js';
@@ -61,21 +66,38 @@ function buildHeadlinesText(
     .join('\n\n');
 }
 
+function briefEmailGreeting(displayName: string | null | undefined, lang: string): string {
+  const code = normalizeLangCode(lang);
+  if (code === 'zh') {
+    return displayName ? `您好，${displayName}，` : '您好，';
+  }
+  return displayName ? `Hello, ${displayName},` : 'Hello,';
+}
+
 async function deliverDailyBrief(sub: SubscriptionWithUser): Promise<DeliveryResult> {
   const rules = sub.rules_json;
   const variant = rules.variant ?? 'full';
-  const lang = resolveDeliveryLang(rules, sub.user_preferred_lang);
+  const { deliveryLang, contentLangs } = resolveSubscriptionLangs(rules, sub.user_preferred_lang);
 
-  const generated = await generateAiBrief({ variant, lang, mode: 'brief' });
-  const subject = `World Monitor — ${sub.name} · AI 简报`;
+  const generated = await generateAiBrief({
+    variant,
+    contentLangs,
+    deliveryLang,
+    mode: 'brief',
+  });
+  const subject =
+    deliveryLang === 'zh'
+      ? `World Monitor — ${sub.name} · AI 简报`
+      : `World Monitor — ${sub.name} · AI Brief`;
   const bodyParts = [
-    `您好${sub.user_display_name ? `，${sub.user_display_name}` : ''}，`,
+    briefEmailGreeting(sub.user_display_name, deliveryLang),
     '',
     generated.brief.body,
     '',
     '— World Monitor',
   ];
   const briefBody = bodyParts.join('\n');
+  const sourceRefs = parseBriefSourceRefs(generated.brief.source_refs_json);
 
   const sent = await sendBriefEmail({
     to: sub.user_email,
@@ -84,6 +106,8 @@ async function deliverDailyBrief(sub: SubscriptionWithUser): Promise<DeliveryRes
     html: true,
     userId: sub.user_id,
     briefId: generated.brief.id,
+    sourceRefs,
+    deliveryLang,
   });
 
   return {
@@ -111,7 +135,7 @@ async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<Delivery
     };
   }
 
-  const deliveryLang = resolveDeliveryLang(sub.rules_json, sub.user_preferred_lang);
+  const deliveryLang = resolveSubscriptionLangs(sub.rules_json, sub.user_preferred_lang).deliveryLang;
   const resolved = await resolveHeadlinesForDelivery(
     pending.map((p) => ({
       news_item_id: p.news_item_id,
@@ -125,14 +149,27 @@ async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<Delivery
   );
   const translatedCount = resolved.filter((r) => r.translated).length;
 
-  let aiSection = '';
+  let aiSectionText = '';
+  let aiSectionHtml = '';
   if (sub.rules_json.includeAiBrief && isHxxbotConfigured()) {
     try {
+      const { deliveryLang: briefDeliveryLang, contentLangs } = resolveSubscriptionLangs(
+        sub.rules_json,
+        sub.user_preferred_lang,
+      );
       const brief = await generateAiBrief({
         variant: sub.rules_json.variant,
-        lang: deliveryLang,
+        contentLangs,
+        deliveryLang: briefDeliveryLang,
       });
-      aiSection = `\n\n--- AI 简报 ---\n\n${brief.brief.body}`;
+      const sourceRefs = parseBriefSourceRefs(brief.brief.source_refs_json);
+      const aiSections = formatAiBriefEmailSections(
+        brief.brief.body,
+        sourceRefs,
+        briefDeliveryLang,
+      );
+      aiSectionText = aiSections.text;
+      aiSectionHtml = aiSections.html;
     } catch {
       /* optional */
     }
@@ -143,7 +180,7 @@ async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<Delivery
     `订阅「${sub.name}」匹配到 ${pending.length} 条新闻（${describeRulesLang(sub.rules_json)}）：`,
     '',
     buildHeadlinesText(resolved),
-    aiSection,
+    aiSectionText,
     '',
     '— World Monitor',
   ].join('\n');
@@ -152,9 +189,7 @@ async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<Delivery
     `<p>订阅「<strong>${escapeHtml(sub.name)}</strong>」匹配到 ${pending.length} 条新闻`
     + `（订阅语言：<strong>${escapeHtml(deliveryLang)}</strong>）：</p>`,
     buildHeadlinesHtml(resolved),
-    aiSection
-      ? `<hr><h3>AI 简报</h3><p>${escapeHtml(aiSection.replace(/\n--- AI 简报 ---\n\n/, '')).replace(/\n/g, '<br>')}</p>`
-      : '',
+    aiSectionHtml,
     '<p style="color:#888;margin-top:24px">— World Monitor</p>',
   ].join('\n');
 

@@ -1,5 +1,5 @@
-import { getDefaultWorkspaceId, query } from '../_shared/db.js';
-import { getHxxbotPublicStatus } from '../_shared/hxxbot-config.js';
+import { getDefaultWorkspaceId, isDatabaseEnabled, query } from '../_shared/db.js';
+import { getHxxbotPublicStatus, refreshHxxbotConfigCache } from '../_shared/hxxbot-config.js';
 import { checkRedisHealth, isRedisEnabled } from '../_shared/redis-client.js';
 import { isLegacyAdminTokenConfigured, isSessionSigningConfigured } from '../_shared/admin-auth.js';
 import { hasAdminUser } from './auth-repository.js';
@@ -13,6 +13,11 @@ import { MODE_OPTIONS, VARIANT_OPTIONS, DELIVERY_LANG_OPTIONS, LANG_DISPLAY_NAME
 
 export async function getAdminStats(): Promise<Record<string, unknown>> {
   const ws = getDefaultWorkspaceId();
+  if (isDatabaseEnabled()) {
+    try {
+      await refreshHxxbotConfigCache();
+    } catch { /* stats still useful without HXXBOT */ }
+  }
   const [usersRes, subs, newsCount, presets] = await Promise.all([
     query<{ count: string }>(
       'SELECT COUNT(*)::text AS count FROM users WHERE workspace_id = $1 AND role = \'user\' AND account_status != \'deleted\'',

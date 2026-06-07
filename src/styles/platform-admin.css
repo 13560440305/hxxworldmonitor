@@ -374,6 +374,74 @@ body {
   font-size: 16px;
 }
 
+.pa-link-btn {
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--pa-accent);
+  cursor: pointer;
+  font: inherit;
+  text-decoration: underline;
+}
+
+.pa-remarks-cell {
+  display: inline-block;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: middle;
+  font-size: 12px;
+  line-height: 1.35;
+  color: var(--pa-muted);
+  cursor: help;
+  border-bottom: 1px dotted rgba(154, 160, 166, 0.45);
+}
+
+html[data-theme='light'] .pa-remarks-cell {
+  border-bottom-color: rgba(107, 114, 128, 0.4);
+}
+
+.pa-remarks-tooltip {
+  position: fixed;
+  z-index: 10050;
+  max-width: min(360px, calc(100vw - 24px));
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--pa-text);
+  background: var(--pa-surface);
+  border: 1px solid var(--pa-border);
+  border-radius: var(--pa-radius);
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+  pointer-events: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+html[data-theme='light'] .pa-remarks-tooltip {
+  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.12);
+}
+
+.pa-remarks-tooltip[hidden] {
+  display: none !important;
+}
+
+.pa-field textarea:not(.pa-log-view textarea) {
+  min-height: 72px;
+  font-family: inherit;
+  font-size: 13px;
+  resize: vertical;
+}
+
+.pa-hxxbot-panel {
+  max-width: 560px;
+}
+
+.pa-hxxbot-panel .pa-toolbar {
+  margin-bottom: 0;
+}
+
 .pa-radio-label {
   display: flex !important;
   align-items: center;
@@ -594,6 +662,31 @@ body {
 }
 
 .pa-muted { color: var(--pa-muted); font-size: 12px; }
+
+.pa-section-hint {
+  margin: 0 0 14px;
+  padding: 10px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--pa-text);
+  background: var(--pa-accent-dim);
+  border: 1px solid var(--pa-border);
+  border-radius: var(--pa-radius);
+}
+
+.pa-section-hint code {
+  font-size: 12px;
+  color: var(--pa-muted);
+}
+
+.pa-filter-bar {
+  margin: 0 0 12px;
+  padding: 8px 12px;
+  font-size: 13px;
+  background: var(--pa-surface);
+  border: 1px solid var(--pa-border);
+  border-radius: var(--pa-radius);
+}
 .pa-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .pa-grid-2 {

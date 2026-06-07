@@ -7,8 +7,11 @@ import {
   getSubscriptionById,
   getSubscriptionByUserAndPreset,
   listSubscriptions,
+  updateSubscription,
+  type SubscriptionRules,
 } from './subscription-repository.js';
-import { describeRulesLang } from './subscription-rules.js';
+import { getUserById } from './user-repository.js';
+import { describeRulesLang, normalizeLangCode } from './subscription-rules.js';
 import {
   getWorkspaceSubscriptionPolicy,
   type WorkspaceSubscriptionPolicy,
@@ -30,8 +33,45 @@ function assertSelfServiceEnabled(policy: WorkspaceSubscriptionPolicy): void {
   }
 }
 
+async function buildSubscriptionRulesForUser(
+  presetRules: SubscriptionRules,
+  userId: string,
+): Promise<SubscriptionRules> {
+  const user = await getUserById(userId);
+  const deliveryLang = normalizeLangCode(user?.preferred_lang ?? presetRules.deliveryLang ?? presetRules.lang ?? 'en');
+  const contentLangs = presetRules.contentLangs?.length
+    ? [...presetRules.contentLangs]
+    : (presetRules.lang?.trim() ? [normalizeLangCode(presetRules.lang)] : ['en']);
+  return {
+    ...presetRules,
+    deliveryLang,
+    contentLangs,
+  };
+}
+
+/** Sync delivery language only — RSS source languages (contentLangs) stay on the preset. */
+export async function syncUserSubscriptionLanguages(
+  userId: string,
+  preferredLang: string,
+  workspaceId?: string,
+): Promise<void> {
+  const deliveryLang = normalizeLangCode(preferredLang);
+  const subs = await listSubscriptions({ userId, workspaceId });
+  for (const sub of subs) {
+    if (!sub.enabled) continue;
+    await updateSubscription(sub.id, {
+      rulesJson: {
+        ...sub.rules_json,
+        deliveryLang,
+      },
+    });
+  }
+}
+
 export async function getUserSubscriptionCatalog(userId: string, workspaceId?: string) {
   const ws = workspaceId ?? getDefaultWorkspaceId();
+  const user = await getUserById(userId);
+  const userPreferred = user?.preferred_lang;
   const policy = await getWorkspaceSubscriptionPolicy(ws);
   const presets = await listPresets({ workspaceId: ws, enabledOnly: true });
   const subs = await listSubscriptions({ userId, workspaceId: ws, enabledOnly: true });
@@ -53,7 +93,9 @@ export async function getUserSubscriptionCatalog(userId: string, workspaceId?: s
         slug: p.slug,
         title: p.title,
         description: p.description,
-        rules_summary: describeRulesLang(p.rules_json),
+        rules_summary: sub
+          ? describeRulesLang(sub.rules_json, userPreferred)
+          : describeRulesLang(p.rules_json, userPreferred),
         subscribed: Boolean(sub),
         subscription_id: sub?.id ?? null,
       };
@@ -92,6 +134,7 @@ export async function subscribeUserToPreset(
     name: preset.title,
     workspaceId: ws,
     enabled: true,
+    rulesJson: await buildSubscriptionRulesForUser(preset.rules_json, userId),
   });
 
   return {

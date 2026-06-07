@@ -16,6 +16,7 @@ import {
   SelfServiceSubscriptionError,
   getUserSubscriptionCatalog,
   subscribeUserToPreset,
+  syncUserSubscriptionLanguages,
   unsubscribeUserSubscription,
 } from './user-subscription-service.js';
 
@@ -219,6 +220,9 @@ export async function handleUserAuthRoutes(
     if (!updated) {
       json(res, 404, { error: 'User not found' });
       return true;
+    }
+    if (body.preferredLang?.trim()) {
+      await syncUserSubscriptionLanguages(auth.session.sub, body.preferredLang.trim());
     }
     json(res, 200, { user: publicUser(updated) });
     return true;

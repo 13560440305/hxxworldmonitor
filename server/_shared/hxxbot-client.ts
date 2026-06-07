@@ -63,7 +63,7 @@ function parseOutput(data: Record<string, unknown>): Record<string, unknown> {
 }
 
 /**
- * POST {apiBaseUrl}/v1/tools/:code/invoke — credentials from .env.local
+ * POST {apiBaseUrl}/v1/tools/:code/invoke — credentials from DB (integration_providers).
  */
 export async function invokeHxxbotTool(
   toolCode: HxxbotToolCode | string,

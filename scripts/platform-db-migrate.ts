@@ -1,3 +1,4 @@
+/** Optional CLI — migrations also run automatically on platform:api / worker startup. */
 import { loadEnvLocal } from '../server/_shared/load-env.js';
 
 loadEnvLocal();

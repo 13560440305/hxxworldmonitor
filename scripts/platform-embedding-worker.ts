@@ -8,7 +8,9 @@ import {
   publishEmbeddingJob,
   readEmbeddingJobs,
 } from '../server/_shared/redis-client.js';
+import { isDatabaseEnabled } from '../server/_shared/db.js';
 import { runEmbeddingBatch } from '../server/platform/research-service.js';
+import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { createPlatformLogger, installProcessLogHandlers } from '../server/_shared/platform-logger.js';
 
 declare const process: { env: Record<string, string | undefined> };
@@ -49,6 +51,11 @@ async function loop(): Promise<void> {
 
 async function main(): Promise<void> {
   const once = process.argv.includes('--once');
+  if (!isDatabaseEnabled()) {
+    log.error('DATABASE_URL is required');
+    process.exit(1);
+  }
+  await ensurePlatformDatabaseReady({ logger: log });
   try {
     if (once) {
       await runOnce();

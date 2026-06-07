@@ -28,6 +28,8 @@ export interface IntegrationProviderDefinition {
   envModel?: string;
   /** Local / self-hosted endpoints may work without an API key */
   apiKeyOptional?: boolean;
+  /** Admin list hint — seeded into remarks when empty; users may override in /admin */
+  defaultRemarks?: string;
 }
 
 export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
@@ -39,6 +41,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     sortOrder: 10,
     envApiKey: 'HXXBOT_API_KEY',
     envBaseUrl: 'HXXBOT_API_URL',
+    defaultRemarks: 'HXXBOT 开放平台。Base URL 填 https://www.hxxbot.com/api（与 hxxnote AI邮件 相同）。订阅发信走 builtin.email_send。',
   },
   {
     slug: 'groq',
@@ -48,6 +51,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultModel: 'llama-3.1-8b-instant',
     sortOrder: 20,
     envApiKey: 'GROQ_API_KEY',
+    defaultRemarks: '美国 Groq Inc.，云端 LLM 推理（OpenAI 兼容）。用于 AI 摘要。',
   },
   {
     slug: 'openrouter',
@@ -57,6 +61,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultModel: 'openrouter/free',
     sortOrder: 30,
     envApiKey: 'OPENROUTER_API_KEY',
+    defaultRemarks: 'OpenRouter（美国），聚合多家 LLM 的路由网关。用于 AI 摘要备选。',
   },
   {
     slug: 'ollama',
@@ -69,6 +74,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     envApiKey: 'OLLAMA_API_KEY',
     envModel: 'OLLAMA_MODEL',
     apiKeyOptional: true,
+    defaultRemarks: '本地/自托管 OpenAI 兼容端点（如 Ollama、LM Studio）。默认本机，无公网厂商。',
   },
   {
     slug: 'finnhub',
@@ -77,6 +83,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://finnhub.io/api/v1',
     sortOrder: 50,
     envApiKey: 'FINNHUB_API_KEY',
+    defaultRemarks: '美国 Finnhub Inc. · 全球股票、外汇、加密货币行情与公司基本面。',
   },
   {
     slug: 'fred',
@@ -85,6 +92,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.stlouisfed.org/fred',
     sortOrder: 60,
     envApiKey: 'FRED_API_KEY',
+    defaultRemarks: '美国圣路易斯联邦储备银行（Fed）· FRED 宏观经济学时间序列数据库。',
   },
   {
     slug: 'eia',
@@ -93,6 +101,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.eia.gov/v2',
     sortOrder: 70,
     envApiKey: 'EIA_API_KEY',
+    defaultRemarks: '美国能源信息署（U.S. EIA）· 石油、天然气、电力等能源官方统计。',
   },
   {
     slug: 'wto',
@@ -101,6 +110,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.wto.org/api',
     sortOrder: 80,
     envApiKey: 'WTO_API_KEY',
+    defaultRemarks: '瑞士日内瓦 · 世界贸易组织（WTO）国际贸易与关税数据。',
   },
   {
     slug: 'acled',
@@ -109,6 +119,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.acleddata.com',
     sortOrder: 90,
     envApiKey: 'ACLED_ACCESS_TOKEN',
+    defaultRemarks: 'ACLED（美/英）· 全球武装冲突、抗议与政治暴力事件数据库。',
   },
   {
     slug: 'cloudflare',
@@ -117,6 +128,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.cloudflare.com/client/v4',
     sortOrder: 100,
     envApiKey: 'CLOUDFLARE_API_TOKEN',
+    defaultRemarks: '美国 Cloudflare · Radar 互联网流量、中断与连通性监测。',
   },
   {
     slug: 'nasa_firms',
@@ -125,6 +137,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://firms.modaps.eosdis.nasa.gov/api',
     sortOrder: 110,
     envApiKey: 'NASA_FIRMS_API_KEY',
+    defaultRemarks: '美国 NASA · FIRMS 全球野火/热点卫星遥感（MODIS/VIIRS）。',
   },
   {
     slug: 'wingbits',
@@ -133,6 +146,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://customer-api.wingbits.com/v1',
     sortOrder: 120,
     envApiKey: 'WINGBITS_API_KEY',
+    defaultRemarks: 'Wingbits（欧洲）· ADS-B 军机与航班追踪 API。',
   },
   {
     slug: 'aviationstack',
@@ -141,6 +155,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'http://api.aviationstack.com/v1',
     sortOrder: 130,
     envApiKey: 'AVIATIONSTACK_API',
+    defaultRemarks: 'AviationStack / APILayer · 全球商业航班实时与历史状态。',
   },
   {
     slug: 'icao',
@@ -149,6 +164,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://applications.icao.int',
     sortOrder: 140,
     envApiKey: 'ICAO_API_KEY',
+    defaultRemarks: '加拿大蒙特利尔 · 国际民航组织（ICAO）航空统计数据。',
   },
   {
     slug: 'urlhaus',
@@ -157,6 +173,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://urlhaus-api.abuse.ch/v1',
     sortOrder: 150,
     envApiKey: 'URLHAUS_AUTH_KEY',
+    defaultRemarks: '瑞士 abuse.ch · URLhaus 恶意链接与 malware 分发情报。',
   },
   {
     slug: 'otx',
@@ -165,6 +182,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://otx.alienvault.com/api/v1',
     sortOrder: 160,
     envApiKey: 'OTX_API_KEY',
+    defaultRemarks: 'AT&T AlienVault OTX（美国）· 开源威胁情报与 IoC 社区。',
   },
   {
     slug: 'abuseipdb',
@@ -173,6 +191,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     defaultBaseUrl: 'https://api.abuseipdb.com/api/v2',
     sortOrder: 170,
     envApiKey: 'ABUSEIPDB_API_KEY',
+    defaultRemarks: 'AbuseIPDB（美国）· IP 地址滥用举报与信誉查询。',
   },
   {
     slug: 'relay',
@@ -182,6 +201,7 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     sortOrder: 180,
     envBaseUrl: 'WS_RELAY_URL',
     envApiKey: 'RELAY_SHARED_SECRET',
+    defaultRemarks: '自托管 WebSocket 中继（本地 Docker 或 Railway）。AIS、OpenSky、RSS、Telegram 等聚合转发，非单一商业 API。',
   },
 ];
 
