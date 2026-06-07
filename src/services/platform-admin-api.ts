@@ -140,6 +140,10 @@ export interface UserRow {
   email: string;
   display_name: string | null;
   preferred_lang?: string;
+  delivery_mode?: string;
+  merged_delivery_time?: string | null;
+  merged_delivery_timezone?: string;
+  merged_delivery_last_sent_date?: string | null;
   created_at: string;
   account_status: 'active' | 'disabled' | 'deleted';
   effective_status: 'active' | 'disabled' | 'deleted';
@@ -496,6 +500,9 @@ export async function updateUser(
   payload: {
     displayName?: string | null;
     preferredLang?: string;
+    deliveryMode?: string;
+    mergedDeliveryTime?: string | null;
+    mergedDeliveryTimezone?: string;
     accountStatus?: 'active' | 'disabled' | 'deleted';
     disablePermanent?: boolean;
     disabledUntil?: string | null;
@@ -507,6 +514,9 @@ export async function updateUser(
       body: JSON.stringify({
         displayName: payload.displayName,
         preferredLang: payload.preferredLang,
+        deliveryMode: payload.deliveryMode,
+        mergedDeliveryTime: payload.mergedDeliveryTime,
+        mergedDeliveryTimezone: payload.mergedDeliveryTimezone,
         accountStatus: payload.accountStatus,
         disablePermanent: payload.disablePermanent,
         disabledUntil: payload.disabledUntil,
@@ -516,12 +526,40 @@ export async function updateUser(
   return data.user;
 }
 
-export async function fetchSubscriptions(opts?: { userId?: string }): Promise<SubscriptionRow[]> {
-  const qs = opts?.userId ? `?userId=${encodeURIComponent(opts.userId)}` : '';
-  const data = await parseJson<{ subscriptions: SubscriptionRow[] }>(
+export async function deliverMergedForUser(userId: string): Promise<unknown> {
+  return parseJson(await adminFetch(`/v1/admin/users/${userId}/deliver-merged`, { method: 'POST' }));
+}
+
+export interface SubscriptionsListResult {
+  subscriptions: SubscriptionRow[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+}
+
+export async function fetchSubscriptions(opts?: {
+  userId?: string;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<SubscriptionsListResult> {
+  const params = new URLSearchParams();
+  if (opts?.userId) params.set('userId', opts.userId);
+  if (opts?.q?.trim()) params.set('q', opts.q.trim());
+  if (opts?.page) params.set('page', String(opts.page));
+  if (opts?.pageSize) params.set('pageSize', String(opts.pageSize));
+  const qs = params.toString() ? `?${params.toString()}` : '';
+  const data = await parseJson<SubscriptionsListResult & { count?: number }>(
     await adminFetch(`/v1/admin/subscriptions${qs}`),
   );
-  return data.subscriptions;
+  return {
+    subscriptions: data.subscriptions,
+    total: data.total ?? data.subscriptions.length,
+    page: data.page ?? 1,
+    pageSize: data.pageSize ?? data.subscriptions.length,
+    totalPages: data.totalPages ?? 1,
+  };
 }
 
 export async function saveSubscription(

@@ -7,12 +7,18 @@ import {
   type SubscriberAccountStatus,
   type SubscriberUserRow,
 } from './user-account.js';
+import {
+  normalizeDeliveryMode,
+  normalizeDeliveryTime,
+  normalizeTimezone,
+} from './delivery-preferences.js';
 
 export type { PlatformUserRow, SubscriberUserRow } from './user-account.js';
 
 const SUBSCRIBER_COLUMNS = `
-  id, workspace_id, email, display_name, role, preferred_lang, created_at,
-  account_status, disabled_until, deleted_at
+  id, workspace_id, email, display_name, role, preferred_lang,
+  delivery_mode, merged_delivery_time, merged_delivery_timezone, merged_delivery_last_sent_date,
+  created_at, account_status, disabled_until, deleted_at
 `;
 
 function mapSubscriberRow(row: SubscriberUserRow): SubscriberUserRow {
@@ -123,6 +129,9 @@ export async function updateSubscriber(
   patch: {
     displayName?: string | null;
     preferredLang?: string;
+    deliveryMode?: string;
+    mergedDeliveryTime?: string | null;
+    mergedDeliveryTimezone?: string;
     accountStatus?: SubscriberAccountStatus;
     disablePermanent?: boolean;
     disabledUntil?: string | null;
@@ -162,17 +171,39 @@ export async function updateSubscriber(
     ? (patch.displayName?.trim() || null)
     : existing.display_name;
   const preferredLang = patch.preferredLang?.trim()?.slice(0, 16) ?? existing.preferred_lang;
+  const deliveryMode = patch.deliveryMode !== undefined
+    ? normalizeDeliveryMode(patch.deliveryMode)
+    : normalizeDeliveryMode(existing.delivery_mode);
+  const mergedDeliveryTime = patch.mergedDeliveryTime !== undefined
+    ? normalizeDeliveryTime(patch.mergedDeliveryTime)
+    : normalizeDeliveryTime(existing.merged_delivery_time);
+  const mergedDeliveryTimezone = patch.mergedDeliveryTimezone !== undefined
+    ? normalizeTimezone(patch.mergedDeliveryTimezone)
+    : normalizeTimezone(existing.merged_delivery_timezone);
 
   const res = await query<SubscriberUserRow>(
     `UPDATE users SET
        display_name = $2,
        preferred_lang = $3,
-       account_status = $4,
-       disabled_until = $5,
-       deleted_at = $6
+       delivery_mode = $4,
+       merged_delivery_time = $5,
+       merged_delivery_timezone = $6,
+       account_status = $7,
+       disabled_until = $8,
+       deleted_at = $9
      WHERE id = $1 AND role = 'user'
      RETURNING ${SUBSCRIBER_COLUMNS}`,
-    [id, displayName, preferredLang, accountStatus, disabledUntil, deletedAt],
+    [
+      id,
+      displayName,
+      preferredLang,
+      deliveryMode,
+      mergedDeliveryTime,
+      mergedDeliveryTimezone,
+      accountStatus,
+      disabledUntil,
+      deletedAt,
+    ],
   );
   return res.rows[0] ? mapSubscriberRow(res.rows[0]) : null;
 }
@@ -186,4 +217,11 @@ export async function assertSubscriberCanLogin(row: SubscriberUserRow): Promise<
     if (eff === 'deleted') throw new Error('account_deleted');
     throw new Error('account_unavailable');
   }
+}
+
+export async function markMergedDeliverySent(userId: string, localDate: string): Promise<void> {
+  await query(
+    `UPDATE users SET merged_delivery_last_sent_date = $2::date WHERE id = $1 AND role = 'user'`,
+    [userId, localDate],
+  );
 }

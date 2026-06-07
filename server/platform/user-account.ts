@@ -7,6 +7,10 @@ export interface SubscriberUserRow {
   display_name: string | null;
   role: 'admin' | 'user';
   preferred_lang: string;
+  delivery_mode: string;
+  merged_delivery_time: string | null;
+  merged_delivery_timezone: string;
+  merged_delivery_last_sent_date: Date | null;
   created_at: Date;
   account_status: SubscriberAccountStatus;
   disabled_until: Date | null;
@@ -59,6 +63,14 @@ export function toAdminUserJson(row: SubscriberUserRow): Record<string, unknown>
     email: row.email,
     display_name: row.display_name,
     preferred_lang: row.preferred_lang,
+    delivery_mode: row.delivery_mode,
+    merged_delivery_time: row.merged_delivery_time,
+    merged_delivery_timezone: row.merged_delivery_timezone,
+    merged_delivery_last_sent_date: row.merged_delivery_last_sent_date
+      ? (row.merged_delivery_last_sent_date instanceof Date
+        ? row.merged_delivery_last_sent_date.toISOString().slice(0, 10)
+        : String(row.merged_delivery_last_sent_date).slice(0, 10))
+      : null,
     created_at: row.created_at,
     account_status: row.account_status,
     effective_status: effective,

@@ -1,7 +1,6 @@
 import { getDefaultWorkspaceId, query } from '../_shared/db.js';
 import type { NewsItemRow } from './news-repository.js';
 import type { SubscriptionRules, SubscriptionRow } from './subscription-repository.js';
-import { resolveContentLangs } from './subscription-rules.js';
 
 export interface MatchedNewsItem extends NewsItemRow {
   match_id?: string;
@@ -15,8 +14,6 @@ function titleMatchesKeywords(title: string, keywords: string[]): boolean {
 
 function itemMatchesRules(item: NewsItemRow, rules: SubscriptionRules): boolean {
   if (rules.variant && item.variant !== rules.variant) return false;
-  const contentLangs = resolveContentLangs(rules);
-  if (contentLangs?.length && !contentLangs.includes(item.lang)) return false;
   if (rules.categories?.length) {
     const cat = item.category ?? 'uncategorized';
     if (!rules.categories.includes(cat)) return false;
@@ -35,7 +32,6 @@ export async function findMatchingNews(
   const hours = opts?.hours ?? rules.hours ?? 24;
   const limit = Math.min(opts?.limit ?? rules.maxItems ?? 50, 100);
   const workspaceId = subscription.workspace_id ?? getDefaultWorkspaceId();
-  const contentLangs = resolveContentLangs(rules);
 
   const params: unknown[] = [workspaceId, subscription.id, hours];
   let sql = `
@@ -53,10 +49,6 @@ export async function findMatchingNews(
   if (rules.variant) {
     params.push(rules.variant);
     sql += ` AND n.variant = $${params.length}`;
-  }
-  if (contentLangs?.length) {
-    params.push(contentLangs);
-    sql += ` AND n.lang = ANY($${params.length}::text[])`;
   }
   if (rules.categories?.length) {
     params.push(rules.categories);

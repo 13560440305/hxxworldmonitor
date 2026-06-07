@@ -542,6 +542,55 @@ html[data-theme='light'] .pa-remarks-tooltip {
   cursor: default;
 }
 
+.pa-sub-toolbar {
+  margin-bottom: 16px;
+}
+
+.pa-sub-search-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  margin-bottom: 12px;
+}
+
+.pa-sub-search-field {
+  flex: 0 1 auto;
+  width: min(520px, 100%);
+}
+
+.pa-sub-search-field input[type='search'] {
+  width: 100%;
+  min-width: 0;
+  height: 40px;
+  padding: 0 14px;
+  border-radius: 10px;
+  border: 1px solid var(--pa-border);
+  background: var(--pa-bg);
+  color: var(--pa-text);
+  font-size: 14px;
+}
+
+.pa-sub-search-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.pa-sub-search-btn {
+  height: 40px;
+  padding: 0 18px;
+  font-size: 14px;
+  border-radius: 10px;
+}
+
+.pa-sub-actions-row {
+  display: flex;
+  justify-content: flex-end;
+}
+
 .pa-floating-toast {
   position: fixed;
   top: 16px;

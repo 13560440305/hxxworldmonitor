@@ -35,6 +35,7 @@ import {
   updateAdminUserApiKeyExpiry,
   runDeliverAll,
   runMatchAll,
+  deliverMergedForUser,
   runSubscriptionDeliver,
   runSubscriptionMatch,
   testIntegrationProvider,
@@ -68,6 +69,10 @@ let meta: AdminMeta | null = null;
 let presets: PresetRow[] = [];
 let users: UserRow[] = [];
 let subscriptions: SubscriptionRow[] = [];
+let subscriptionsTotal = 0;
+let subscriptionsPage = 1;
+let subscriptionSearchQuery = '';
+const SUBSCRIPTIONS_PAGE_SIZE = 20;
 let logFiles: LogFileInfo[] = [];
 let logServices: string[] = [];
 let logTail: LogTailResult | null = null;
@@ -136,10 +141,6 @@ function rulesSummary(rules: SubscriptionRules): string {
   if (rules.variant) parts.push(rules.variant);
   const delivery = rules.deliveryLang ?? rules.lang;
   if (delivery) parts.push(`订阅:${formatLangOption(delivery)}`);
-  if (rules.contentLangs?.length) parts.push(`源:${rules.contentLangs.map(formatLangOption).join('+')}`);
-  else if (rules.lang && rules.deliveryLang && rules.lang !== rules.deliveryLang) {
-    parts.push(`源:${formatLangOption(rules.lang)}`);
-  }
   if (rules.categories?.length) parts.push(`分类:${rules.categories.join(',')}`);
   if (rules.keywords?.length) parts.push(`词:${rules.keywords.slice(0, 3).join(',')}`);
   return parts.join(' · ') || '—';
@@ -170,7 +171,6 @@ function defaultRules(): SubscriptionRules {
     mode: 'keyword',
     variant: 'full',
     deliveryLang: 'zh',
-    contentLangs: ['en', 'zh'],
     hours: 24,
     keywords: [],
   };
@@ -189,11 +189,19 @@ async function reloadSection(): Promise<void> {
     } else if (section === 'users') {
       [users, subscriptions] = await Promise.all([
         fetchUsers(includeDeletedUsers),
-        fetchSubscriptions(),
+        fetchSubscriptions({ pageSize: 10_000 }).then((r) => r.subscriptions),
       ]);
     } else if (section === 'subscriptions') {
-      [subscriptions, presets, users] = await Promise.all([
-        fetchSubscriptions(subscriptionFilterUserId ? { userId: subscriptionFilterUserId } : undefined),
+      const subResult = await fetchSubscriptions({
+        userId: subscriptionFilterUserId ?? undefined,
+        q: subscriptionSearchQuery || undefined,
+        page: subscriptionsPage,
+        pageSize: SUBSCRIPTIONS_PAGE_SIZE,
+      });
+      subscriptions = subResult.subscriptions;
+      subscriptionsTotal = subResult.total;
+      subscriptionsPage = subResult.page;
+      [presets, users] = await Promise.all([
         fetchPresets(),
         fetchUsers(),
       ]);
@@ -333,7 +341,11 @@ function renderShell(content: string): void {
       }
       section = next;
       if (next === 'integrations') integrationsPage = 1;
-      if (next === 'subscriptions') subscriptionFilterUserId = null;
+      if (next === 'subscriptions') {
+        subscriptionFilterUserId = null;
+        subscriptionsPage = 1;
+        subscriptionSearchQuery = '';
+      }
       void reloadSection();
     });
   });
@@ -474,6 +486,15 @@ function userApiKeyStatusCell(apiKey?: UserApiKeySummary): string {
   return '<span class="pa-muted">无</span>';
 }
 
+function deliveryModeSummary(u: UserRow): string {
+  const time = u.merged_delivery_time ?? '08:00';
+  const tz = u.merged_delivery_timezone ?? 'Asia/Shanghai';
+  if ((u.delivery_mode ?? 'individual') === 'merged') {
+    return `合并 ${time} (${tz})`;
+  }
+  return `单独 ${time} (${tz})`;
+}
+
 function renderUsersTable(): string {
   const rows = users.map((u) => {
     const subSummary = userSubscriptionSummary(u.id);
@@ -486,22 +507,26 @@ function renderUsersTable(): string {
       <td>${escapeHtml(u.email)}</td>
       <td>${escapeHtml(u.display_name ?? '—')}</td>
       <td>${escapeHtml(formatLangOption(u.preferred_lang ?? 'zh'))}</td>
+      <td class="pa-muted">${escapeHtml(deliveryModeSummary(u))}</td>
       <td>${subCell}</td>
       <td>${userApiKeyStatusCell(u.apiKey)}</td>
       <td>${userStatusBadge(u)}</td>
       <td class="pa-muted">${new Date(u.created_at).toLocaleString()}</td>
       <td class="pa-actions">
         <button class="pa-btn pa-btn-sm" data-view-user-subs="${u.id}" ${subSummary === '0' ? 'disabled' : ''}>订阅</button>
+        ${(u.delivery_mode ?? 'individual') === 'merged' && subSummary !== '0'
+    ? `<button class="pa-btn pa-btn-sm" data-deliver-merged-user="${u.id}">合并发信</button>`
+    : ''}
         <button class="pa-btn pa-btn-sm" data-edit-user="${u.id}">编辑</button>
         <button class="pa-btn pa-btn-sm" data-user-api-key="${u.id}" data-user-email="${escapeHtml(u.email)}">API Key</button>
         ${u.effective_status !== 'deleted' ? `<button class="pa-btn pa-btn-sm" data-reset-pwd="${u.id}" data-user-email="${escapeHtml(u.email)}">重置密码</button>` : ''}
       </td>
     </tr>`;
   }).join('');
-  return `<p class="pa-muted" style="margin-bottom:12px">「订阅」列为启用中的订阅数；「API Key」用于第三方 Open API 鉴权。点击「API Key」可查看、创建、轮换或撤销。</p>
+  return `<p class="pa-muted" style="margin-bottom:12px">「订阅」列为启用中的订阅数；「发送方式」为单独或合并定时发送。「API Key」用于第三方 Open API 鉴权。</p>
   <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>订阅</th><th>API Key</th><th>状态</th><th>注册时间</th><th>操作</th>
-  </tr></thead><tbody>${rows || '<tr><td colspan="9" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
+    <th>ID</th><th>邮箱</th><th>显示名</th><th>订阅语言</th><th>发送方式</th><th>订阅</th><th>API Key</th><th>状态</th><th>注册时间</th><th>操作</th>
+  </tr></thead><tbody>${rows || '<tr><td colspan="10" class="pa-muted">暂无用户</td></tr>'}</tbody></table></div>`;
 }
 
 function renderSettingsPanel(): string {
@@ -820,15 +845,86 @@ function deliveryLangOptions(selected = 'zh'): string {
   ).join('');
 }
 
+const ADMIN_MERGED_TIMEZONES = [
+  'Asia/Shanghai', 'Asia/Tokyo', 'Asia/Singapore', 'Europe/London', 'Europe/Paris', 'America/New_York', 'America/Los_Angeles', 'UTC',
+];
+
+function mergedTimezoneAdminOptions(selected: string): string {
+  return ADMIN_MERGED_TIMEZONES.map((tz) =>
+    `<option value="${escapeHtml(tz)}"${tz === selected ? ' selected' : ''}>${escapeHtml(tz)}</option>`,
+  ).join('');
+}
+
+function deliveryPrefsAdminFields(prefix: string, user?: UserRow): string {
+  const mode = user?.delivery_mode ?? 'individual';
+  return `
+    <div class="pa-field"><label>发送方式</label>
+      <select id="${prefix}delivery_mode">
+        <option value="individual"${mode === 'individual' ? ' selected' : ''}>单独发送（每个数据源一封）</option>
+        <option value="merged"${mode === 'merged' ? ' selected' : ''}>合并发送（多数据源一封，按类目）</option>
+      </select>
+    </div>
+    <div id="${prefix}merged_schedule">
+      <div class="pa-grid-2">
+        <div class="pa-field"><label>每日发送时间</label>
+          <input type="time" id="${prefix}merged_time" value="${escapeHtml(user?.merged_delivery_time ?? '08:00')}" /></div>
+        <div class="pa-field"><label>时区</label>
+          <select id="${prefix}merged_tz">${mergedTimezoneAdminOptions(user?.merged_delivery_timezone ?? 'Asia/Shanghai')}</select></div>
+      </div>
+    </div>
+    <p class="pa-muted">单独/合并模式均按上述时间由 worker 自动发信（每天一次）；管理后台手动发信可立即触发。</p>`;
+}
+
+function wireDeliveryPrefsAdmin(_root: ParentNode, _prefix: string): void {
+  /* schedule always visible for both modes */
+}
+
+function readDeliveryPrefsFromAdmin(root: ParentNode, prefix: string): {
+  deliveryMode: string;
+  mergedDeliveryTime: string | null;
+  mergedDeliveryTimezone: string;
+} {
+  const mode = (root.querySelector(`#${prefix}delivery_mode`) as HTMLSelectElement).value;
+  return {
+    deliveryMode: mode,
+    mergedDeliveryTime: (root.querySelector(`#${prefix}merged_time`) as HTMLInputElement).value || '08:00',
+    mergedDeliveryTimezone: (root.querySelector(`#${prefix}merged_tz`) as HTMLSelectElement).value,
+  };
+}
+
+function goSubscriptionsPage(next: number): void {
+  const totalPages = Math.max(1, Math.ceil(subscriptionsTotal / SUBSCRIPTIONS_PAGE_SIZE));
+  subscriptionsPage = Math.min(Math.max(1, next), totalPages);
+  void reloadSection();
+}
+
 function renderSubscriptionsFilterBar(): string {
   if (!subscriptionFilterUserId) return '';
   const u = users.find((x) => x.id === subscriptionFilterUserId);
   const label = u?.email ?? subscriptionFilterUserId;
-  return `<p class="pa-filter-bar">正在查看用户 <strong>${escapeHtml(label)}</strong> 的订阅（${subscriptions.length} 条）
+  return `<p class="pa-filter-bar">正在查看用户 <strong>${escapeHtml(label)}</strong> 的订阅（共 ${subscriptionsTotal} 条）
     <button type="button" class="pa-link-btn" id="clearSubFilter">显示全部用户</button></p>`;
 }
 
+function renderSubscriptionsToolbar(): string {
+  return `<div class="pa-sub-toolbar">
+    <div class="pa-sub-search-row">
+      <div class="pa-sub-search-field">
+        <input type="search" id="subSearchInput" placeholder="用户邮箱 / 显示名 / 订阅名称" value="${escapeHtml(subscriptionSearchQuery)}" autocomplete="off" />
+      </div>
+      <div class="pa-sub-search-actions">
+        <button type="button" class="pa-btn pa-sub-search-btn" id="subSearchBtn">搜索</button>
+        ${subscriptionSearchQuery ? '<button type="button" class="pa-btn pa-sub-search-btn" id="subSearchClearBtn">清除</button>' : ''}
+      </div>
+    </div>
+    <div class="pa-sub-actions-row">
+      <button class="pa-btn pa-btn-primary pa-btn-sm" id="newSubBtn">新建订阅</button>
+    </div>
+  </div>`;
+}
+
 function renderSubscriptionsTable(): string {
+  const totalPages = Math.max(1, Math.ceil(subscriptionsTotal / SUBSCRIPTIONS_PAGE_SIZE));
   const rows = subscriptions.map((s) => `
     <tr>
       <td>${escapeHtml(s.name)}</td>
@@ -845,7 +941,8 @@ function renderSubscriptionsTable(): string {
     </tr>`).join('');
   return `<div class="pa-table-wrap"><table class="pa-table"><thead><tr>
     <th>名称</th><th>用户</th><th>预设</th><th>规则</th><th>状态</th><th>操作</th>
-  </tr></thead><tbody>${rows || '<tr><td colspan="6" class="pa-muted">暂无订阅</td></tr>'}</tbody></table></div>`;
+  </tr></thead><tbody>${rows || '<tr><td colspan="6" class="pa-muted">暂无订阅</td></tr>'}</tbody></table></div>
+  ${renderTablePagination('subscriptions', subscriptionsPage, totalPages, subscriptionsTotal, SUBSCRIPTIONS_PAGE_SIZE)}`;
 }
 
 function renderLogsPanel(): string {
@@ -880,12 +977,8 @@ function presetsSectionHint(): string {
   return `<p class="pa-section-hint"><strong>可订阅项</strong>是套餐模板（名称 + 默认规则）。用户在前端账户页从这里选择订阅；创建订阅时会将规则<strong>拷贝</strong>到「订阅规则」。停用后不再出现在用户列表，但不影响已有订阅。说明见 <code>docs/订阅与可订阅项说明.md</code>。</p>`;
 }
 
-function subscriptionsSectionHint(): string {
-  return `<p class="pa-section-hint"><strong>用户订阅</strong>列出所有用户的邮件订阅（含前端「我的账户」自助订阅）。可<strong>编辑</strong>规则、启用/停用、<strong>删除</strong>；「匹配」「发信」用于单条试跑。说明见 <code>docs/订阅与可订阅项说明.md</code>。</p>`;
-}
-
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint"><strong>全量匹配</strong>：按各订阅规则扫描新闻库，写入待推送记录（<code>daily_brief</code> 类订阅跳过）。<strong>全量发信</strong>：通过 HXXBOT 工具 <code>builtin.email_send</code> 发送邮件（需在「数据源配置」启用 HXXBOT 并填写 API Key）。日常可改用 <code>npm run platform:subscription</code> 定时任务。</p>`;
+  return `<p class="pa-section-hint"><strong>全量匹配</strong>：扫描新闻库写入待推送记录。<strong>全量发信</strong>：立即发送（忽略每日时间窗口）。日常自动发信由 <code>npm run platform:subscription</code> 按用户「每日发送时间」触发（单独/合并均适用，每天一轮）。</p>`;
 }
 
 function sectionContent(): string {
@@ -900,7 +993,7 @@ function sectionContent(): string {
         <label class="pa-inline-check"><input type="checkbox" id="includeDeletedUsers" ${includeDeletedUsers ? 'checked' : ''} /> 显示已删除</label>
       </div>${renderUsersTable()}`;
     case 'subscriptions':
-      return `${subscriptionsSectionHint()}${renderSubscriptionsFilterBar()}<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newSubBtn">新建订阅</button></div>${renderSubscriptionsTable()}`;
+      return `${renderSubscriptionsFilterBar()}${renderSubscriptionsToolbar()}${renderSubscriptionsTable()}`;
     case 'jobs':
       return `
         ${jobsSectionHint()}
@@ -991,13 +1084,40 @@ function bindSectionEvents(): void {
   app.querySelectorAll('[data-view-user-subs]').forEach((el) => {
     el.addEventListener('click', () => {
       subscriptionFilterUserId = (el as HTMLElement).dataset.viewUserSubs ?? null;
+      subscriptionsPage = 1;
+      subscriptionSearchQuery = '';
       section = 'subscriptions';
       void reloadSection();
     });
   });
   document.getElementById('clearSubFilter')?.addEventListener('click', () => {
     subscriptionFilterUserId = null;
+    subscriptionsPage = 1;
     void reloadSection();
+  });
+  const runSubSearch = () => {
+    const input = document.getElementById('subSearchInput') as HTMLInputElement | null;
+    subscriptionSearchQuery = input?.value.trim() ?? '';
+    subscriptionsPage = 1;
+    void reloadSection();
+  };
+  document.getElementById('subSearchBtn')?.addEventListener('click', runSubSearch);
+  document.getElementById('subSearchClearBtn')?.addEventListener('click', () => {
+    subscriptionSearchQuery = '';
+    subscriptionsPage = 1;
+    void reloadSection();
+  });
+  document.getElementById('subSearchInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') runSubSearch();
+  });
+  app.querySelectorAll('[data-page-nav="subscriptions"]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const btn = el as HTMLButtonElement;
+      if (btn.disabled) return;
+      const next = Number(btn.dataset.page);
+      if (!Number.isFinite(next)) return;
+      goSubscriptionsPage(next);
+    });
   });
   document.getElementById('newPresetBtn')?.addEventListener('click', () => openPresetModal());
   document.getElementById('newUserBtn')?.addEventListener('click', () => openUserModal());
@@ -1104,6 +1224,14 @@ function bindSectionEvents(): void {
       openEditUserModal((el as HTMLElement).dataset.editUser!);
     });
   });
+  app.querySelectorAll('[data-deliver-merged-user]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const id = (el as HTMLElement).dataset.deliverMergedUser!;
+      void deliverMergedForUser(id)
+        .then((r) => showToast(`合并发信: ${JSON.stringify(r)}`))
+        .catch((e) => showToast(String(e), true));
+    });
+  });
   app.querySelectorAll('[data-reset-pwd]').forEach((el) => {
     el.addEventListener('click', () => {
       const id = (el as HTMLElement).dataset.resetPwd!;
@@ -1166,19 +1294,11 @@ function bindSectionEvents(): void {
 function rulesFormFields(rules: SubscriptionRules, prefix: string): string {
   const cats = meta?.categories ?? [];
   const deliveryLangs = meta?.deliveryLangs ?? ['zh', 'en', 'jp', 'kor', 'fra', 'de', 'spa'];
-  const ingestLangs = meta?.langs?.length ? meta.langs : ['en', 'zh'];
   const catChips = cats.map((c) => {
     const on = rules.categories?.includes(c.id) ? ' on' : '';
     return `<span class="pa-chip${on}" data-cat="${escapeHtml(c.id)}">${escapeHtml(c.id)} (${c.count})</span>`;
   }).join('');
   const delivery = rules.deliveryLang ?? rules.lang ?? 'zh';
-  const contentSelected = rules.contentLangs?.length
-    ? rules.contentLangs
-    : (rules.lang ? [rules.lang] : []);
-  const contentChips = ingestLangs.map((l) => {
-    const on = contentSelected.includes(l) ? ' on' : '';
-    return `<span class="pa-chip${on}" data-content-lang="${escapeHtml(l)}">${escapeHtml(formatLangOption(l))}</span>`;
-  }).join('');
 
   return `
     <div class="pa-field">
@@ -1198,10 +1318,6 @@ function rulesFormFields(rules: SubscriptionRules, prefix: string): string {
           `<option value="${l}" ${delivery === l ? 'selected' : ''}>${escapeHtml(formatLangOption(l))}</option>`).join('')}
         </select></div>
     </div>
-    <div class="pa-field"><label>数据源语言（点击选择，不选=全部；入库时 RSS 已标记 lang）</label>
-      <p class="pa-muted" style="margin:0 0 8px;font-size:12px">决定从 news_items 匹配哪些语言的 RSS；与下方「订阅语言」可不同（如源=en、投递=zh 时标题会翻译）。</p>
-      <div class="pa-chips" id="${prefix}contentLangChips">${contentChips || '<span class="pa-muted">暂无</span>'}</div>
-    </div>
     <div class="pa-field"><label>关键词（逗号分隔）</label>
       <input id="${prefix}keywords" value="${escapeHtml((rules.keywords ?? []).join(', '))}" /></div>
     <div class="pa-field"><label>分类（点击选择）</label><div class="pa-chips" id="${prefix}catChips">${catChips || '<span class="pa-muted">暂无分类数据</span>'}</div></div>
@@ -1210,14 +1326,11 @@ function rulesFormFields(rules: SubscriptionRules, prefix: string): string {
       <div class="pa-field"><label>排序</label><input id="${prefix}sort" type="number" value="0" /></div>
     </div>
     <div class="pa-field"><label><input type="checkbox" id="${prefix}aiBrief" ${rules.includeAiBrief ? 'checked' : ''} /> 邮件附带 AI 简报</label></div>
-    <p class="pa-muted">若订阅语言与新闻源语言不一致，发信前将自动翻译并缓存到 OSS（按分类目录）与数据库。</p>`;
+    <p class="pa-muted">关键词订阅发信：对匹配到的新闻生成 AI 简报正文，末尾附参考来源链接；勾选「附带 AI 简报」会额外加入全球 variant 简报。发信时若新闻语言与订阅语言不一致，标题会自动翻译。</p>`;
 }
 
 function wireCatChips(prefix: string): void {
   document.querySelectorAll(`#${prefix}catChips .pa-chip`).forEach((el) => {
-    el.addEventListener('click', () => el.classList.toggle('on'));
-  });
-  document.querySelectorAll(`#${prefix}contentLangChips .pa-chip`).forEach((el) => {
     el.addEventListener('click', () => el.classList.toggle('on'));
   });
 }
@@ -1228,17 +1341,11 @@ function readRulesFromForm(prefix: string): SubscriptionRules {
     const c = (el as HTMLElement).dataset.cat;
     if (c) selectedCats.push(c);
   });
-  const contentLangs: string[] = [];
-  document.querySelectorAll(`#${prefix}contentLangChips .pa-chip.on`).forEach((el) => {
-    const l = (el as HTMLElement).dataset.contentLang;
-    if (l) contentLangs.push(l);
-  });
   const kw = (document.getElementById(`${prefix}keywords`) as HTMLInputElement).value;
   return {
     mode: (document.getElementById(`${prefix}mode`) as HTMLSelectElement).value as SubscriptionRules['mode'],
     variant: (document.getElementById(`${prefix}variant`) as HTMLSelectElement).value,
     deliveryLang: (document.getElementById(`${prefix}deliveryLang`) as HTMLSelectElement).value,
-    contentLangs: contentLangs.length ? contentLangs : undefined,
     keywords: kw.split(/[,，]/).map((s) => s.trim()).filter(Boolean),
     categories: selectedCats.length ? selectedCats : undefined,
     hours: Number((document.getElementById(`${prefix}hours`) as HTMLInputElement).value) || 24,
@@ -1328,6 +1435,7 @@ function openEditUserModal(userId: string): void {
       <div class="pa-field"><label>订阅语言</label>
         <select id="eu_preferred_lang">${deliveryLangOptions(user.preferred_lang ?? 'zh')}</select>
       </div>
+      ${deliveryPrefsAdminFields('eu_', user)}
       <div class="pa-field"><label>账号状态</label>
         <select id="eu_status">
           <option value="active" ${statusVal === 'active' ? 'selected' : ''}>正常</option>
@@ -1347,6 +1455,7 @@ function openEditUserModal(userId: string): void {
       </div>
       ${user.effective_status === 'deleted' ? '<p class="pa-muted">该账号已逻辑删除。将状态改回「正常」可恢复登录与推送。</p>' : ''}
       <p class="pa-muted">邮箱与用户 ID 不可修改。删除为逻辑删除，不会物理移除数据。</p>`), (root) => {
+      wireDeliveryPrefsAdmin(root, 'eu_');
       const statusSel = root.querySelector('#eu_status') as HTMLSelectElement;
       const disableOpts = root.querySelector('#eu_disable_opts') as HTMLElement;
       const untilInput = root.querySelector('#eu_disabled_until') as HTMLInputElement;
@@ -1382,6 +1491,7 @@ function openEditUserModal(userId: string): void {
           displayName: (root.querySelector('#eu_name') as HTMLInputElement).value.trim() || null,
           preferredLang: (root.querySelector('#eu_preferred_lang') as HTMLSelectElement).value,
           accountStatus,
+          ...readDeliveryPrefsFromAdmin(root, 'eu_'),
         };
 
         if (accountStatus === 'disabled') {

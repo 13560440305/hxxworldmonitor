@@ -1,5 +1,6 @@
 import { isHxxbotConfigured } from '../_shared/hxxbot-config.js';
 import { buildArticlePrompts, deduplicateHeadlines } from '../worldmonitor/news/v1/_shared.js';
+import type { BriefSourceRef } from './brief-sources.js';
 import { parseBriefSourceRefs, selectBriefSourceItems } from './brief-sources.js';
 import { getLatestBrief, saveBrief, type BriefRow } from './brief-repository.js';
 import { runQaSession } from './hxxbot-qa.js';
@@ -35,24 +36,15 @@ function scopeKey(variant: string, deliveryLang: string, contentKey: string, mod
   return `${variant}:${deliveryLang}:${contentKey}:${mode}`;
 }
 
-function contentScopeKey(contentLangs: string[] | null | undefined, legacyLang?: string): string {
-  if (contentLangs?.length) return contentLangs.map(normalizeLangCode).sort().join('+');
-  if (legacyLang?.trim()) return normalizeLangCode(legacyLang);
-  return 'all';
-}
-
 export async function generateAiBrief(input: GenerateBriefInput = {}): Promise<GenerateBriefResult> {
   if (!isHxxbotConfigured()) {
     throw new Error('HXXBOT 未配置：请在管理后台「数据源配置」中设置 HXXBOT Base URL 与 API Key');
   }
 
   const variant = input.variant ?? 'full';
-  const contentLangs = input.contentLangs?.length
-    ? input.contentLangs.map(normalizeLangCode)
-    : (input.lang?.trim() ? [normalizeLangCode(input.lang)] : null);
   const deliveryLang = normalizeLangCode(input.deliveryLang ?? input.lang ?? 'en');
   const mode = input.mode ?? 'brief';
-  const scope = scopeKey(variant, deliveryLang, contentScopeKey(contentLangs, input.lang), mode);
+  const scope = scopeKey(variant, deliveryLang, 'all', mode);
 
   if (!input.force) {
     const existing = await getLatestBrief({ briefType: 'world', scopeKey: scope });
@@ -64,7 +56,6 @@ export async function generateAiBrief(input: GenerateBriefInput = {}): Promise<G
   const limit = Math.min(input.headlineLimit ?? 12, 30);
   const items = await listRecentNews({
     variant,
-    langs: contentLangs ?? undefined,
     limit,
     hours: input.hours ?? 24,
   });
@@ -74,9 +65,8 @@ export async function generateAiBrief(input: GenerateBriefInput = {}): Promise<G
     ? sourceRefs.map((s) => s.title)
     : deduplicateHeadlines(items.map((i) => i.title)).slice(0, limit);
   if (headlines.length === 0) {
-    const src = contentLangs?.length ? contentLangs.join(', ') : 'any';
     throw new Error(
-      `No recent headlines for brief (variant=${variant}, source langs=${src}, last ${input.hours ?? 24}h). Run platform:ingest:once.`,
+      `No recent headlines for brief (variant=${variant}, last ${input.hours ?? 24}h). Run platform:ingest:once.`,
     );
   }
 
@@ -109,4 +99,47 @@ export async function generateAiBrief(input: GenerateBriefInput = {}): Promise<G
   });
 
   return { brief, cached: false, headlineCount: headlines.length };
+}
+
+/** AI digest from an explicit headline set (e.g. keyword subscription matches). */
+export async function generateBriefFromHeadlines(input: {
+  headlines: string[];
+  sourceRefs: BriefSourceRef[];
+  deliveryLang?: string;
+  variant?: string;
+  mode?: 'brief' | 'analysis';
+  modelId?: string;
+}): Promise<{ body: string; sourceRefs: BriefSourceRef[] }> {
+  if (!isHxxbotConfigured()) {
+    throw new Error('HXXBOT 未配置：请在管理后台「数据源配置」中设置 HXXBOT Base URL 与 API Key');
+  }
+
+  const headlines = deduplicateHeadlines(input.headlines.map((h) => h.trim()).filter(Boolean));
+  if (!headlines.length) {
+    throw new Error('No headlines provided for digest brief');
+  }
+
+  const variant = input.variant ?? 'full';
+  const deliveryLang = normalizeLangCode(input.deliveryLang ?? 'en');
+  const mode = input.mode ?? 'brief';
+
+  const { systemPrompt, userPrompt } = buildArticlePrompts(headlines, headlines, {
+    mode,
+    geoContext: '',
+    variant,
+    lang: deliveryLang,
+  });
+
+  const qa = await runQaSession({
+    messages: [
+      { role: 'system', content: systemPrompt },
+      { role: 'user', content: userPrompt },
+    ],
+    model_id: input.modelId,
+  });
+
+  return {
+    body: qa.answer.trim(),
+    sourceRefs: input.sourceRefs,
+  };
 }

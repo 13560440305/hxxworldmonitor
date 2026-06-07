@@ -38,6 +38,9 @@ function publicUser(user: Awaited<ReturnType<typeof getUserById>>) {
     email: user.email,
     display_name: user.display_name,
     preferred_lang: user.preferred_lang,
+    delivery_mode: user.delivery_mode ?? 'individual',
+    merged_delivery_time: user.merged_delivery_time,
+    merged_delivery_timezone: user.merged_delivery_timezone ?? 'Asia/Shanghai',
     created_at: user.created_at,
   };
 }
@@ -204,7 +207,13 @@ export async function handleUserAuthRoutes(
   }
 
   if (req.method === 'PATCH' && path === '/platform/v1/auth/me') {
-    let body: { displayName?: string | null; preferredLang?: string } = {};
+    let body: {
+      displayName?: string | null;
+      preferredLang?: string;
+      deliveryMode?: string;
+      mergedDeliveryTime?: string | null;
+      mergedDeliveryTimezone?: string;
+    } = {};
     try {
       const raw = await readBody(req);
       if (raw) body = JSON.parse(raw) as typeof body;
@@ -224,6 +233,9 @@ export async function handleUserAuthRoutes(
     const updated = await updateSubscriber(auth.session.sub, {
       displayName: body.displayName,
       preferredLang: body.preferredLang,
+      deliveryMode: body.deliveryMode,
+      mergedDeliveryTime: body.mergedDeliveryTime,
+      mergedDeliveryTimezone: body.mergedDeliveryTimezone,
     });
     if (!updated) {
       json(res, 404, { error: 'User not found' });

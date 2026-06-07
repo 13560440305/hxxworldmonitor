@@ -19,7 +19,7 @@ installProcessLogHandlers(log);
 
 const INTERVAL_MS = Number(process.env.PLATFORM_SUBSCRIPTION_INTERVAL_MS ?? 3_600_000);
 
-async function runOnce(): Promise<void> {
+async function runOnce(opts?: { forceDeliver?: boolean }): Promise<void> {
   if (!isDatabaseEnabled()) {
     throw new Error('DATABASE_URL not configured');
   }
@@ -34,7 +34,10 @@ async function runOnce(): Promise<void> {
     return;
   }
 
-  const deliver = await deliverAllEnabledSubscriptions();
+  const deliver = await deliverAllEnabledSubscriptions({
+    forceDeliver: opts?.forceDeliver ?? false,
+    workerIntervalMs: INTERVAL_MS,
+  });
   const sent = deliver.results.filter((r) => !r.skipped && !r.error).length;
   const skipped = deliver.results.filter((r) => r.skipped).length;
   log.info('deliver pass complete', {
@@ -68,10 +71,10 @@ async function main(): Promise<void> {
         const match = await runMatchPassAll();
         log.info('match-only complete', { newMatches: match.totalMatched });
       } else if (deliverOnly) {
-        const deliver = await deliverAllEnabledSubscriptions();
+        const deliver = await deliverAllEnabledSubscriptions({ forceDeliver: true, workerIntervalMs: INTERVAL_MS });
         log.info('deliver-only complete', { processed: deliver.processed, errors: deliver.errors.length });
       } else {
-        await runOnce();
+        await runOnce({ forceDeliver: true });
       }
     } else {
       log.info('worker started', { intervalMs: INTERVAL_MS });

@@ -30,6 +30,8 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '017_schema_subscription_content_delivery_langs.sql', optional: true },
   { file: '018_schema_brief_source_refs.sql', optional: true },
   { file: '019_schema_user_api_keys.sql', optional: true },
+  { file: '020_schema_user_delivery_preferences.sql', optional: true },
+  { file: '021_schema_user_delivery_schedule_all_modes.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {

@@ -10,6 +10,9 @@ export interface PlatformUserProfile {
   email: string;
   display_name: string | null;
   preferred_lang: string;
+  delivery_mode?: string;
+  merged_delivery_time?: string | null;
+  merged_delivery_timezone?: string;
   created_at: string;
 }
 
@@ -124,12 +127,18 @@ export async function fetchCurrentUser(): Promise<PlatformUserProfile | null> {
 export async function updateUserProfile(payload: {
   displayName?: string | null;
   preferredLang?: string;
+  deliveryMode?: string;
+  mergedDeliveryTime?: string | null;
+  mergedDeliveryTimezone?: string;
 }): Promise<PlatformUserProfile> {
   const resp = await userFetch('/v1/auth/me', {
     method: 'PATCH',
     body: JSON.stringify({
       displayName: payload.displayName,
       preferredLang: payload.preferredLang,
+      deliveryMode: payload.deliveryMode,
+      mergedDeliveryTime: payload.mergedDeliveryTime,
+      mergedDeliveryTimezone: payload.mergedDeliveryTimezone,
     }),
   });
   const data = await parseJson<{ user: PlatformUserProfile }>(resp);

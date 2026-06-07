@@ -16,6 +16,7 @@ import {
 } from './preset-repository.js';
 import {
   deliverAllEnabledSubscriptions,
+  deliverMergedSubscriptionsForUser,
   deliverSubscription,
   runMatchPassAll,
 } from './subscription-delivery-service.js';
@@ -25,6 +26,7 @@ import {
   deleteSubscription,
   getSubscriptionById,
   listSubscriptions,
+  listSubscriptionsPage,
   updateSubscription,
   type SubscriptionRules,
 } from './subscription-repository.js';
@@ -460,6 +462,9 @@ export async function handlePlatformAdminRoutes(
     let body: {
       displayName?: string | null;
       preferredLang?: string;
+      deliveryMode?: string;
+      mergedDeliveryTime?: string | null;
+      mergedDeliveryTimezone?: string;
       accountStatus?: 'active' | 'disabled' | 'deleted';
       disablePermanent?: boolean;
       disabledUntil?: string | null;
@@ -472,6 +477,9 @@ export async function handlePlatformAdminRoutes(
       const user = await updateSubscriber(id, {
         displayName: body.displayName,
         preferredLang: body.preferredLang,
+        deliveryMode: body.deliveryMode,
+        mergedDeliveryTime: body.mergedDeliveryTime,
+        mergedDeliveryTimezone: body.mergedDeliveryTimezone,
         accountStatus: body.accountStatus,
         disablePermanent: body.disablePermanent,
         disabledUntil: body.disabledUntil,
@@ -659,8 +667,28 @@ export async function handlePlatformAdminRoutes(
   if (req.method === 'GET' && path === '/platform/v1/admin/subscriptions') {
     const userId = url.searchParams.get('userId') ?? undefined;
     const enabledOnly = url.searchParams.get('enabled') === 'true';
-    const subs = await listSubscriptions({ userId, enabledOnly });
-    json(res, 200, { subscriptions: subs, count: subs.length });
+    const q = url.searchParams.get('q') ?? undefined;
+    const pageRaw = Number(url.searchParams.get('page') ?? '1');
+    const pageSizeRaw = Number(url.searchParams.get('pageSize') ?? '20');
+    const page = Number.isFinite(pageRaw) ? pageRaw : 1;
+    const pageSize = Number.isFinite(pageSizeRaw) ? pageSizeRaw : 20;
+
+    const result = await listSubscriptionsPage({
+      userId,
+      enabledOnly,
+      q,
+      page,
+      pageSize,
+    });
+    const totalPages = Math.max(1, Math.ceil(result.total / result.pageSize));
+    json(res, 200, {
+      subscriptions: result.items,
+      count: result.items.length,
+      total: result.total,
+      page: result.page,
+      pageSize: result.pageSize,
+      totalPages,
+    });
     return true;
   }
 
@@ -745,7 +773,18 @@ export async function handlePlatformAdminRoutes(
   if (req.method === 'POST' && /^\/platform\/v1\/admin\/subscriptions\/[^/]+\/deliver$/.test(path)) {
     const id = path.split('/')[5]!;
     try {
-      const result = await deliverSubscription(id);
+      const result = await deliverSubscription(id, { force: true });
+      json(res, 200, { ok: true, ...result });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  if (req.method === 'POST' && /^\/platform\/v1\/admin\/users\/[^/]+\/deliver-merged$/.test(path)) {
+    const id = path.split('/')[5]!;
+    try {
+      const result = await deliverMergedSubscriptionsForUser(id, { force: true });
       json(res, 200, { ok: true, ...result });
     } catch (err) {
       json(res, 400, { error: String(err) });
@@ -761,7 +800,7 @@ export async function handlePlatformAdminRoutes(
 
   if (req.method === 'POST' && path === '/platform/v1/admin/run/deliver-all') {
     try {
-      const result = await deliverAllEnabledSubscriptions();
+      const result = await deliverAllEnabledSubscriptions({ forceDeliver: true });
       json(res, 200, { ok: true, ...result });
     } catch (err) {
       json(res, 400, { error: String(err) });

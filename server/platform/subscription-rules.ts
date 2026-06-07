@@ -4,7 +4,7 @@ export interface SubscriptionRules {
   variant?: string;
   /** @deprecated Prefer contentLangs + deliveryLang */
   lang?: string;
-  /** Source feed languages to match (empty = all ingested languages) */
+  /** @deprecated Ignored for matching; kept for legacy rules_json only */
   contentLangs?: string[];
   /** Language for email / translated content delivered to subscriber */
   deliveryLang?: string;
@@ -49,34 +49,26 @@ export function resolveDeliveryLang(rules: SubscriptionRules, userPreferredLang?
   return normalizeLangCode(rules.deliveryLang ?? rules.lang ?? 'en');
 }
 
-/** Source languages to filter news_items.lang; null = no filter (all ingested langs). */
-export function resolveContentLangs(rules: SubscriptionRules): string[] | null {
-  if (rules.contentLangs?.length) {
-    return [...new Set(rules.contentLangs.map(normalizeLangCode))];
-  }
-  if (rules.lang?.trim()) return [normalizeLangCode(rules.lang)];
+/** @deprecated No longer used to filter news_items; matching is language-agnostic. */
+export function resolveContentLangs(_rules: SubscriptionRules): string[] | null {
   return null;
 }
 
 export interface ResolvedSubscriptionLangs {
   deliveryLang: string;
-  /** null = match all source languages in news_items */
+  /** @deprecated always null — matching no longer filters by source language */
   contentLangs: string[] | null;
+  /** @deprecated use per-item translation at delivery time */
   needsTranslation: boolean;
 }
 
-/** Resolve source vs delivery for matching, briefs, and digest emails. */
+/** Resolve delivery language for emails / AI briefs. Source language is not filtered at match time. */
 export function resolveSubscriptionLangs(
   rules: SubscriptionRules,
   userPreferredLang?: string,
 ): ResolvedSubscriptionLangs {
   const deliveryLang = resolveDeliveryLang(rules, userPreferredLang);
-  const contentLangs = resolveContentLangs(rules);
-  const needsTranslation = Boolean(
-    contentLangs?.length
-    && !contentLangs.some((c) => langsEquivalent(c, deliveryLang)),
-  );
-  return { deliveryLang, contentLangs, needsTranslation };
+  return { deliveryLang, contentLangs: null, needsTranslation: false };
 }
 
 export function normalizeRulesFromRaw(raw: unknown): SubscriptionRules {
@@ -169,7 +161,6 @@ export const MODE_OPTIONS = [
 ] as const;
 
 export function describeRulesLang(rules: SubscriptionRules, userPreferredLang?: string): string {
-  const { deliveryLang, contentLangs } = resolveSubscriptionLangs(rules, userPreferredLang);
-  if (contentLangs?.length) return `源:${contentLangs.join('+')}→${deliveryLang}`;
-  return `全部源→${deliveryLang}`;
+  const { deliveryLang } = resolveSubscriptionLangs(rules, userPreferredLang);
+  return deliveryLang;
 }

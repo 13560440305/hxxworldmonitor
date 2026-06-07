@@ -1,7 +1,18 @@
 import { isHxxbotConfigured } from '../_shared/hxxbot-config.js';
-import { formatAiBriefEmailSections } from './brief-sources.js';
-import { generateAiBrief, parseBriefSourceRefs } from './brief-service.js';
-import { sendBriefEmail, sendEmailNotification } from './notification-service.js';
+import {
+  deliveryPreferencesFromUser,
+  shouldSendScheduledNow,
+} from './delivery-preferences.js';
+import {
+  generateAiBrief,
+  generateBriefFromHeadlines,
+  parseBriefSourceRefs,
+} from './brief-service.js';
+import {
+  renderMergedDigestEmail,
+  type SubscriptionDigestSlice,
+} from './merge-email-template.js';
+import { sendBriefEmail } from './notification-service.js';
 import {
   listPendingMatches,
   markMatchesNotified,
@@ -16,10 +27,11 @@ import {
 import {
   describeRulesLang,
   normalizeLangCode,
+  resolveDeliveryLang,
   resolveSubscriptionLangs,
 } from './subscription-rules.js';
 import { resolveHeadlinesForDelivery } from './translation-service.js';
-import { getUserById } from './user-repository.js';
+import { getUserById, markMergedDeliverySent } from './user-repository.js';
 import { isSubscriberLoginAllowed } from './user-account.js';
 
 export interface DeliveryResult {
@@ -32,39 +44,11 @@ export interface DeliveryResult {
   skipped?: string;
   error?: string;
   translatedCount?: number;
+  merged?: boolean;
+  subscriptionCount?: number;
 }
 
-function escapeHtml(text: string): string {
-  return text
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function buildHeadlinesHtml(
-  items: Array<{ title: string; link: string; source: string; category: string | null }>,
-): string {
-  if (!items.length) return '<p>暂无匹配新闻。</p>';
-  const rows = items
-    .map((item) => {
-      const cat = item.category ? `<span style="color:#666">[${escapeHtml(item.category)}]</span> ` : '';
-      return `<li style="margin-bottom:8px">${cat}<a href="${escapeHtml(item.link)}">${escapeHtml(item.title)}</a> <small style="color:#888">— ${escapeHtml(item.source)}</small></li>`;
-    })
-    .join('\n');
-  return `<ul style="padding-left:20px;line-height:1.5">${rows}</ul>`;
-}
-
-function buildHeadlinesText(
-  items: Array<{ title: string; link: string; source: string; category: string | null }>,
-): string {
-  return items
-    .map((item, i) => {
-      const cat = item.category ? `[${item.category}] ` : '';
-      return `${i + 1}. ${cat}${item.title}\n   ${item.link} (${item.source})`;
-    })
-    .join('\n\n');
-}
+export type { SubscriptionDigestSlice };
 
 function briefEmailGreeting(displayName: string | null | undefined, lang: string): string {
   const code = normalizeLangCode(lang);
@@ -74,14 +58,113 @@ function briefEmailGreeting(displayName: string | null | undefined, lang: string
   return displayName ? `Hello, ${displayName},` : 'Hello,';
 }
 
+function localDateInTimezone(now: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(now);
+}
+
+async function collectDailyBriefSlice(sub: SubscriptionWithUser): Promise<SubscriptionDigestSlice | null> {
+  const rules = sub.rules_json;
+  const variant = rules.variant ?? 'full';
+  const { deliveryLang } = resolveSubscriptionLangs(rules, sub.user_preferred_lang);
+  const generated = await generateAiBrief({ variant, deliveryLang, mode: 'brief' });
+  const sourceRefs = parseBriefSourceRefs(generated.brief.source_refs_json);
+  return {
+    subscriptionId: sub.id,
+    subscriptionName: sub.name,
+    mode: 'daily_brief',
+    digestBody: generated.brief.body.trim(),
+    sourceRefs,
+    matchIds: [],
+  };
+}
+
+async function collectKeywordDigestSlice(sub: SubscriptionWithUser): Promise<SubscriptionDigestSlice | null> {
+  await runSubscriptionMatchPass(sub);
+  const pending = await listPendingMatches(sub.id);
+
+  if (!pending.length && !sub.rules_json.includeAiBrief) {
+    return null;
+  }
+
+  const deliveryLang = resolveSubscriptionLangs(sub.rules_json, sub.user_preferred_lang).deliveryLang;
+  const resolved = await resolveHeadlinesForDelivery(
+    pending.map((p) => ({
+      news_item_id: p.news_item_id,
+      title: p.title,
+      link: p.link,
+      source: p.source,
+      category: p.category,
+      lang: p.lang,
+    })),
+    deliveryLang,
+  );
+
+  let sourceRefs = resolved.map((r) => ({
+    news_item_id: r.news_item_id,
+    title: r.title,
+    link: r.link,
+    source: r.source,
+    category: r.category,
+  }));
+
+  let digestBody = '';
+  if (pending.length > 0) {
+    const digest = await generateBriefFromHeadlines({
+      headlines: resolved.map((r) => r.title),
+      sourceRefs,
+      deliveryLang,
+      variant: sub.rules_json.variant,
+    });
+    digestBody = digest.body;
+  }
+
+  if (sub.rules_json.includeAiBrief) {
+    try {
+      const globalBrief = await generateAiBrief({
+        variant: sub.rules_json.variant,
+        deliveryLang,
+      });
+      const heading = deliveryLang === 'zh' ? '【延伸阅读 · 全球简报】' : 'Global brief';
+      digestBody = [digestBody, `${heading}\n\n${globalBrief.brief.body.trim()}`].filter(Boolean).join('\n\n');
+      if (!sourceRefs.length) {
+        sourceRefs.push(...parseBriefSourceRefs(globalBrief.brief.source_refs_json));
+      }
+    } catch {
+      /* optional */
+    }
+  }
+
+  if (!digestBody.trim() && !sourceRefs.length) return null;
+
+  return {
+    subscriptionId: sub.id,
+    subscriptionName: sub.name,
+    mode: 'keyword',
+    digestBody: digestBody.trim(),
+    sourceRefs,
+    matchIds: pending.map((p) => p.match_id),
+  };
+}
+
+async function collectSubscriptionDigestSlice(sub: SubscriptionWithUser): Promise<SubscriptionDigestSlice | null> {
+  if (sub.rules_json.mode === 'daily_brief') {
+    return collectDailyBriefSlice(sub);
+  }
+  return collectKeywordDigestSlice(sub);
+}
+
 async function deliverDailyBrief(sub: SubscriptionWithUser): Promise<DeliveryResult> {
   const rules = sub.rules_json;
   const variant = rules.variant ?? 'full';
-  const { deliveryLang, contentLangs } = resolveSubscriptionLangs(rules, sub.user_preferred_lang);
+  const { deliveryLang } = resolveSubscriptionLangs(rules, sub.user_preferred_lang);
 
   const generated = await generateAiBrief({
     variant,
-    contentLangs,
     deliveryLang,
     mode: 'brief',
   });
@@ -89,14 +172,13 @@ async function deliverDailyBrief(sub: SubscriptionWithUser): Promise<DeliveryRes
     deliveryLang === 'zh'
       ? `World Monitor — ${sub.name} · AI 简报`
       : `World Monitor — ${sub.name} · AI Brief`;
-  const bodyParts = [
+  const briefBody = [
     briefEmailGreeting(sub.user_display_name, deliveryLang),
     '',
     generated.brief.body,
     '',
     '— World Monitor',
-  ];
-  const briefBody = bodyParts.join('\n');
+  ].join('\n');
   const sourceRefs = parseBriefSourceRefs(generated.brief.source_refs_json);
 
   const sent = await sendBriefEmail({
@@ -121,10 +203,8 @@ async function deliverDailyBrief(sub: SubscriptionWithUser): Promise<DeliveryRes
 }
 
 async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<DeliveryResult> {
-  await runSubscriptionMatchPass(sub);
-  const pending = await listPendingMatches(sub.id);
-
-  if (!pending.length && !sub.rules_json.includeAiBrief) {
+  const slice = await collectKeywordDigestSlice(sub);
+  if (!slice) {
     return {
       subscriptionId: sub.id,
       subscriptionName: sub.name,
@@ -136,85 +216,151 @@ async function deliverKeywordDigest(sub: SubscriptionWithUser): Promise<Delivery
   }
 
   const deliveryLang = resolveSubscriptionLangs(sub.rules_json, sub.user_preferred_lang).deliveryLang;
-  const resolved = await resolveHeadlinesForDelivery(
-    pending.map((p) => ({
-      news_item_id: p.news_item_id,
-      title: p.title,
-      link: p.link,
-      source: p.source,
-      category: p.category,
-      lang: p.lang,
-    })),
-    deliveryLang,
-  );
-  const translatedCount = resolved.filter((r) => r.translated).length;
+  const pendingCount = slice.matchIds.length;
+  const subject =
+    deliveryLang === 'zh'
+      ? `World Monitor — ${sub.name} · ${pendingCount} 条匹配`
+      : `World Monitor — ${sub.name} · ${pendingCount} matches`;
+  const intro =
+    deliveryLang === 'zh'
+      ? `${briefEmailGreeting(sub.user_display_name, deliveryLang)}\n\n订阅「${sub.name}」匹配到 ${pendingCount} 条新闻（${describeRulesLang(sub.rules_json, sub.user_preferred_lang)}）：`
+      : `${briefEmailGreeting(sub.user_display_name, deliveryLang)}\n\nSubscription "${sub.name}" matched ${pendingCount} items (${describeRulesLang(sub.rules_json, sub.user_preferred_lang)}):`;
+  const briefBody = [intro, '', slice.digestBody, '', '— World Monitor'].join('\n');
 
-  let aiSectionText = '';
-  let aiSectionHtml = '';
-  if (sub.rules_json.includeAiBrief && isHxxbotConfigured()) {
-    try {
-      const { deliveryLang: briefDeliveryLang, contentLangs } = resolveSubscriptionLangs(
-        sub.rules_json,
-        sub.user_preferred_lang,
-      );
-      const brief = await generateAiBrief({
-        variant: sub.rules_json.variant,
-        contentLangs,
-        deliveryLang: briefDeliveryLang,
-      });
-      const sourceRefs = parseBriefSourceRefs(brief.brief.source_refs_json);
-      const aiSections = formatAiBriefEmailSections(
-        brief.brief.body,
-        sourceRefs,
-        briefDeliveryLang,
-      );
-      aiSectionText = aiSections.text;
-      aiSectionHtml = aiSections.html;
-    } catch {
-      /* optional */
-    }
-  }
-
-  const subject = `World Monitor — ${sub.name}（${pending.length} 条更新 · ${deliveryLang}）`;
-  const textBody = [
-    `订阅「${sub.name}」匹配到 ${pending.length} 条新闻（${describeRulesLang(sub.rules_json)}）：`,
-    '',
-    buildHeadlinesText(resolved),
-    aiSectionText,
-    '',
-    '— World Monitor',
-  ].join('\n');
-
-  const htmlBody = [
-    `<p>订阅「<strong>${escapeHtml(sub.name)}</strong>」匹配到 ${pending.length} 条新闻`
-    + `（订阅语言：<strong>${escapeHtml(deliveryLang)}</strong>）：</p>`,
-    buildHeadlinesHtml(resolved),
-    aiSectionHtml,
-    '<p style="color:#888;margin-top:24px">— World Monitor</p>',
-  ].join('\n');
-
-  const sent = await sendEmailNotification({
+  const sent = await sendBriefEmail({
     to: sub.user_email,
     subject,
-    text: textBody,
-    html_body: `<div style="font-family:sans-serif;line-height:1.5">${htmlBody}</div>`,
+    briefBody,
+    html: true,
     userId: sub.user_id,
+    sourceRefs: slice.sourceRefs,
+    deliveryLang,
   });
 
-  await markMatchesNotified(pending.map((p) => p.match_id));
+  if (slice.matchIds.length) {
+    await markMatchesNotified(slice.matchIds);
+  }
 
   return {
     subscriptionId: sub.id,
     subscriptionName: sub.name,
     userEmail: sub.user_email,
     mode: 'keyword',
-    itemCount: pending.length,
-    translatedCount,
+    itemCount: pendingCount,
     deliveryId: sent.deliveryId,
   };
 }
 
-export async function deliverSubscription(subscriptionId: string): Promise<DeliveryResult> {
+export async function deliverMergedSubscriptionsForUser(
+  userId: string,
+  opts?: { force?: boolean; workerIntervalMs?: number },
+): Promise<DeliveryResult> {
+  if (!isHxxbotConfigured()) {
+    throw new Error('HXXBOT 未配置，无法发送邮件');
+  }
+
+  const user = await getUserById(userId);
+  if (!user) throw new Error('User not found');
+  if (!isSubscriberLoginAllowed(user)) {
+    throw new Error('Subscription user is disabled or deleted');
+  }
+
+  const prefs = deliveryPreferencesFromUser(user);
+  if (prefs.deliveryMode !== 'merged') {
+    throw new Error('User delivery mode is not merged');
+  }
+  if (!opts?.force && !shouldSendScheduledNow(prefs, { workerIntervalMs: opts?.workerIntervalMs })) {
+    return {
+      subscriptionId: userId,
+      subscriptionName: 'merged',
+      userEmail: user.email,
+      mode: 'merged',
+      itemCount: 0,
+      skipped: 'outside delivery window',
+    };
+  }
+
+  const subs = await listSubscriptions({ userId, enabledOnly: true });
+  if (!subs.length) {
+    return {
+      subscriptionId: userId,
+      subscriptionName: 'merged',
+      userEmail: user.email,
+      mode: 'merged',
+      itemCount: 0,
+      skipped: 'no enabled subscriptions',
+    };
+  }
+
+  const slices: SubscriptionDigestSlice[] = [];
+  for (const sub of subs) {
+    const slice = await collectSubscriptionDigestSlice(sub);
+    if (slice) slices.push(slice);
+  }
+
+  if (!slices.length) {
+    return {
+      subscriptionId: userId,
+      subscriptionName: 'merged',
+      userEmail: user.email,
+      mode: 'merged',
+      itemCount: 0,
+      skipped: 'no content to deliver',
+    };
+  }
+
+  const deliveryLang = resolveDeliveryLang({}, user.preferred_lang);
+  const merged = await renderMergedDigestEmail({
+    deliveryLang,
+    userDisplayName: user.display_name,
+    slices,
+    generateCategoryBrief: (headlines) =>
+      generateBriefFromHeadlines({
+        headlines,
+        sourceRefs: [],
+        deliveryLang,
+      }).then((r) => r.body),
+  });
+
+  const briefBody = [
+    briefEmailGreeting(user.display_name, deliveryLang),
+    '',
+    merged.briefBody,
+    '',
+    '— World Monitor',
+  ].join('\n');
+
+  const sent = await sendBriefEmail({
+    to: user.email,
+    subject: merged.subject,
+    briefBody,
+    html: true,
+    userId: user.id,
+    sourceRefs: merged.sourceRefs,
+    deliveryLang,
+  });
+
+  const allMatchIds = slices.flatMap((s) => s.matchIds);
+  if (allMatchIds.length) await markMatchesNotified(allMatchIds);
+
+  await markMergedDeliverySent(userId, localDateInTimezone(new Date(), prefs.deliveryTimezone));
+
+  return {
+    subscriptionId: userId,
+    subscriptionName: 'merged',
+    userEmail: user.email,
+    mode: 'merged',
+    itemCount: merged.sourceRefs.length,
+    deliveryId: sent.deliveryId,
+    merged: true,
+    subscriptionCount: slices.length,
+  };
+}
+
+export async function deliverSubscription(
+  subscriptionId: string,
+  opts?: { force?: boolean },
+): Promise<DeliveryResult> {
   if (!isHxxbotConfigured()) {
     throw new Error('HXXBOT 未配置，无法发送邮件');
   }
@@ -230,6 +376,11 @@ export async function deliverSubscription(subscriptionId: string): Promise<Deliv
     throw new Error('Subscription user is disabled or deleted');
   }
 
+  const prefs = deliveryPreferencesFromUser(user);
+  if (prefs.deliveryMode === 'merged') {
+    return deliverMergedSubscriptionsForUser(sub.user_id, { force: opts?.force ?? true });
+  }
+
   const withUser: SubscriptionWithUser = {
     ...sub,
     user_email: user.email,
@@ -243,7 +394,11 @@ export async function deliverSubscription(subscriptionId: string): Promise<Deliv
   return deliverKeywordDigest(withUser);
 }
 
-export async function deliverAllEnabledSubscriptions(): Promise<{
+export async function deliverAllEnabledSubscriptions(opts?: {
+  /** Manual/admin runs bypass the daily schedule window. */
+  forceDeliver?: boolean;
+  workerIntervalMs?: number;
+}): Promise<{
   processed: number;
   results: DeliveryResult[];
   errors: Array<{ subscriptionId: string; error: string }>;
@@ -255,17 +410,55 @@ export async function deliverAllEnabledSubscriptions(): Promise<{
   const subs = await listSubscriptions({ enabledOnly: true });
   const results: DeliveryResult[] = [];
   const errors: Array<{ subscriptionId: string; error: string }> = [];
+  const byUser = new Map<string, SubscriptionWithUser[]>();
 
   for (const sub of subs) {
+    const list = byUser.get(sub.user_id) ?? [];
+    list.push(sub);
+    byUser.set(sub.user_id, list);
+  }
+
+  const force = opts?.forceDeliver ?? false;
+
+  for (const [userId, userSubs] of byUser) {
     try {
-      if (sub.rules_json.mode === 'daily_brief') {
-        results.push(await deliverDailyBrief(sub));
-      } else {
-        results.push(await deliverKeywordDigest(sub));
+      const user = await getUserById(userId);
+      if (!user || !isSubscriberLoginAllowed(user)) continue;
+
+      const prefs = deliveryPreferencesFromUser(user);
+
+      if (prefs.deliveryMode === 'merged') {
+        results.push(await deliverMergedSubscriptionsForUser(userId, {
+          force,
+          workerIntervalMs: opts?.workerIntervalMs,
+        }));
+        continue;
       }
+
+      if (!force && !shouldSendScheduledNow(prefs, { workerIntervalMs: opts?.workerIntervalMs })) {
+        results.push({
+          subscriptionId: userId,
+          subscriptionName: `${user.email} (individual)`,
+          userEmail: user.email,
+          mode: 'individual',
+          itemCount: 0,
+          skipped: 'outside delivery window',
+        });
+        continue;
+      }
+
+      for (const sub of userSubs) {
+        if (sub.rules_json.mode === 'daily_brief') {
+          results.push(await deliverDailyBrief(sub));
+        } else {
+          results.push(await deliverKeywordDigest(sub));
+        }
+      }
+
+      await markMergedDeliverySent(userId, localDateInTimezone(new Date(), prefs.deliveryTimezone));
     } catch (err) {
       errors.push({
-        subscriptionId: sub.id,
+        subscriptionId: userId,
         error: err instanceof Error ? err.message : String(err),
       });
     }

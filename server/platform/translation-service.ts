@@ -16,6 +16,18 @@ import { langsEquivalent, normalizeLangCode } from './subscription-rules.js';
 
 const log = createPlatformLogger('platform-translation');
 
+/** Heuristic: RSS lang tag is often wrong; detect script vs declared lang. */
+function titleLikelyInLang(title: string, lang: string): boolean {
+  const trimmed = title.trim();
+  if (!trimmed) return true;
+  const code = normalizeLangCode(lang);
+  const latin = (trimmed.match(/[A-Za-z]/g)?.length ?? 0) / trimmed.length;
+  const cjk = (trimmed.match(/[\u4e00-\u9fff]/g)?.length ?? 0) / trimmed.length;
+  if (code === 'zh') return cjk >= 0.25 || latin < 0.4;
+  if (code === 'en') return latin >= 0.4;
+  return true;
+}
+
 export interface NewsHeadlineInput {
   news_item_id: string;
   title: string;
@@ -70,7 +82,7 @@ async function translateAndPersist(
 
   const sourceLang = normalizeLangCode(item.lang);
   const normalizedTarget = normalizeLangCode(targetLang);
-  const translated = await translateText(item.title, normalizedTarget, sourceLang);
+  const translated = await translateText(item.title, normalizedTarget, 'auto');
   const title = translated.translated_text.trim() || item.title;
 
   const payload: TranslationPayload = {
@@ -145,7 +157,7 @@ export async function resolveHeadlineForDelivery(
     translated: false,
   };
 
-  if (langsEquivalent(sourceLang, targetLang)) {
+  if (langsEquivalent(sourceLang, targetLang) && titleLikelyInLang(item.title, targetLang)) {
     return base;
   }
 

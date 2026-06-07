@@ -123,32 +123,101 @@ export async function listSubscriptions(opts?: {
   enabledOnly?: boolean;
   workspaceId?: string;
 }): Promise<SubscriptionWithUser[]> {
-  const ws = opts?.workspaceId ?? getDefaultWorkspaceId();
-  const params: unknown[] = [ws];
-  let sql = `
-    SELECT ${SUB_SELECT},
-           u.email AS user_email, u.display_name AS user_display_name,
-           u.preferred_lang AS user_preferred_lang,
-           p.title AS preset_title, p.slug AS preset_slug
-    FROM subscriptions s
-    JOIN users u ON u.id = s.user_id
-    LEFT JOIN subscription_presets p ON p.id = s.preset_id
-    WHERE s.workspace_id = $1
-  `;
-  if (opts?.userId) {
-    params.push(opts.userId);
-    sql += ` AND s.user_id = $${params.length}`;
-  }
-  if (opts?.enabledOnly) {
-    sql += ' AND s.enabled = TRUE';
-  }
-  sql += ' ORDER BY s.created_at DESC';
+  const page = await listSubscriptionsPage({
+    ...opts,
+    page: 1,
+    pageSize: 10_000,
+  });
+  return page.items;
+}
 
-  const res = await query<SubscriptionWithUser>(sql, params);
-  return res.rows.map((row) => ({
-    ...row,
-    rules_json: normalizeRulesFromRaw(row.rules_json),
-  }));
+export interface ListSubscriptionsPageResult {
+  items: SubscriptionWithUser[];
+  total: number;
+  page: number;
+  pageSize: number;
+}
+
+function buildSubscriptionListWhere(
+  opts: {
+    userId?: string;
+    enabledOnly?: boolean;
+    q?: string;
+  },
+  params: unknown[],
+): string {
+  let where = 'WHERE s.workspace_id = $1';
+  if (opts.userId) {
+    params.push(opts.userId);
+    where += ` AND s.user_id = $${params.length}`;
+  }
+  if (opts.enabledOnly) {
+    where += ' AND s.enabled = TRUE';
+  }
+  const q = opts.q?.trim();
+  if (q) {
+    params.push(`%${q.replace(/[%_\\]/g, (c) => `\\${c}`)}%`);
+    const p = `$${params.length}`;
+    where += ` AND (u.email ILIKE ${p} ESCAPE '\\' OR COALESCE(u.display_name, '') ILIKE ${p} ESCAPE '\\' OR s.name ILIKE ${p} ESCAPE '\\')`;
+  }
+  return where;
+}
+
+export async function listSubscriptionsPage(opts?: {
+  userId?: string;
+  enabledOnly?: boolean;
+  workspaceId?: string;
+  q?: string;
+  page?: number;
+  pageSize?: number;
+}): Promise<ListSubscriptionsPageResult> {
+  const ws = opts?.workspaceId ?? getDefaultWorkspaceId();
+  const page = Math.max(1, opts?.page ?? 1);
+  const pageSize = Math.min(Math.max(1, opts?.pageSize ?? 20), 100);
+  const offset = (page - 1) * pageSize;
+
+  const countParams: unknown[] = [ws];
+  const where = buildSubscriptionListWhere(
+    { userId: opts?.userId, enabledOnly: opts?.enabledOnly, q: opts?.q },
+    countParams,
+  );
+
+  const countRes = await query<{ count: string }>(
+    `SELECT COUNT(*)::text AS count
+     FROM subscriptions s
+     JOIN users u ON u.id = s.user_id
+     ${where}`,
+    countParams,
+  );
+  const total = Number(countRes.rows[0]?.count ?? 0);
+
+  const listParams = [...countParams, pageSize, offset];
+  const limitIdx = listParams.length - 1;
+  const offsetIdx = listParams.length;
+
+  const res = await query<SubscriptionWithUser>(
+    `SELECT ${SUB_SELECT},
+            u.email AS user_email, u.display_name AS user_display_name,
+            u.preferred_lang AS user_preferred_lang,
+            p.title AS preset_title, p.slug AS preset_slug
+     FROM subscriptions s
+     JOIN users u ON u.id = s.user_id
+     LEFT JOIN subscription_presets p ON p.id = s.preset_id
+     ${where}
+     ORDER BY s.created_at DESC
+     LIMIT $${limitIdx} OFFSET $${offsetIdx}`,
+    listParams,
+  );
+
+  return {
+    items: res.rows.map((row) => ({
+      ...row,
+      rules_json: normalizeRulesFromRaw(row.rules_json),
+    })),
+    total,
+    page,
+    pageSize,
+  };
 }
 
 export async function deleteSubscription(id: string): Promise<boolean> {

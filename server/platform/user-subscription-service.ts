@@ -39,17 +39,13 @@ async function buildSubscriptionRulesForUser(
 ): Promise<SubscriptionRules> {
   const user = await getUserById(userId);
   const deliveryLang = normalizeLangCode(user?.preferred_lang ?? presetRules.deliveryLang ?? presetRules.lang ?? 'en');
-  const contentLangs = presetRules.contentLangs?.length
-    ? [...presetRules.contentLangs]
-    : (presetRules.lang?.trim() ? [normalizeLangCode(presetRules.lang)] : ['en']);
   return {
     ...presetRules,
     deliveryLang,
-    contentLangs,
   };
 }
 
-/** Sync delivery language only — RSS source languages (contentLangs) stay on the preset. */
+/** Sync delivery language only — matching is language-agnostic. */
 export async function syncUserSubscriptionLanguages(
   userId: string,
   preferredLang: string,

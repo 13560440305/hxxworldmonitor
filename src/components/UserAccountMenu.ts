@@ -47,6 +47,33 @@ const LANG_LABELS: Record<string, string> = {
 
 const DELIVERY_LANG_OPTIONS = ['zh', 'en', 'jp', 'kor', 'fra', 'de', 'spa'] as const;
 
+const MERGED_TIMEZONE_OPTIONS = [
+  'Asia/Shanghai',
+  'Asia/Tokyo',
+  'Asia/Singapore',
+  'Europe/London',
+  'Europe/Paris',
+  'America/New_York',
+  'America/Los_Angeles',
+  'UTC',
+] as const;
+
+function deliveryModeOptions(selected: string): string {
+  const modes = [
+    { value: 'individual', label: t('account.deliveryModeIndividual') },
+    { value: 'merged', label: t('account.deliveryModeMerged') },
+  ];
+  return modes.map((m) =>
+    `<option value="${escapeHtml(m.value)}"${m.value === selected ? ' selected' : ''}>${escapeHtml(m.label)}</option>`,
+  ).join('');
+}
+
+function mergedTimezoneOptions(selected: string): string {
+  return MERGED_TIMEZONE_OPTIONS.map((tz) =>
+    `<option value="${escapeHtml(tz)}"${tz === selected ? ' selected' : ''}>${escapeHtml(tz)}</option>`,
+  ).join('');
+}
+
 function langLabel(code: string): string {
   const name = LANG_LABELS[code];
   return name ? `${name} (${code})` : code;
@@ -960,6 +987,21 @@ export class UserAccountMenu {
           <select id="userProfilePreferredLang">${deliveryLangOptions(this.user.preferred_lang || 'zh')}</select>
         </label>
         <p class="wm-user-muted wm-user-field-hint">${escapeHtml(t('account.preferredLangHint'))}</p>
+        <label class="wm-user-field">
+          <span>${escapeHtml(t('account.deliveryMode'))}</span>
+          <select id="userProfileDeliveryMode">${deliveryModeOptions(this.user.delivery_mode ?? 'individual')}</select>
+        </label>
+        <div id="userDeliveryScheduleWrap">
+          <label class="wm-user-field">
+            <span>${escapeHtml(t('account.deliveryScheduleTime'))}</span>
+            <input type="time" id="userProfileMergedTime" value="${escapeHtml(this.user.merged_delivery_time ?? '08:00')}" />
+          </label>
+          <label class="wm-user-field">
+            <span>${escapeHtml(t('account.deliveryScheduleTimezone'))}</span>
+            <select id="userProfileMergedTz">${mergedTimezoneOptions(this.user.merged_delivery_timezone ?? 'Asia/Shanghai')}</select>
+          </label>
+        </div>
+        <p class="wm-user-muted wm-user-field-hint">${escapeHtml(t('account.deliveryModeHint'))}</p>
         <p class="wm-user-error" id="userProfileError" hidden></p>
         <p class="wm-user-success" id="userProfileSuccess" hidden></p>
       </section>
@@ -1047,12 +1089,18 @@ export class UserAccountMenu {
     if (!overlay || !this.user) return;
     const displayName = (overlay.querySelector('#userProfileDisplayName') as HTMLInputElement).value.trim();
     const preferredLang = (overlay.querySelector('#userProfilePreferredLang') as HTMLSelectElement).value;
+    const deliveryMode = (overlay.querySelector('#userProfileDeliveryMode') as HTMLSelectElement).value;
+    const mergedDeliveryTime = (overlay.querySelector('#userProfileMergedTime') as HTMLInputElement | null)?.value ?? null;
+    const mergedDeliveryTimezone = (overlay.querySelector('#userProfileMergedTz') as HTMLSelectElement | null)?.value;
     const btn = overlay.querySelector('#userProfileSaveBtn') as HTMLButtonElement | null;
     if (btn) btn.disabled = true;
     try {
       this.user = await updateUserProfile({
         displayName: displayName || null,
         preferredLang,
+        deliveryMode,
+        mergedDeliveryTime: mergedDeliveryTime || '08:00',
+        mergedDeliveryTimezone: mergedDeliveryTimezone || 'Asia/Shanghai',
       });
       this.closeProfileModal();
       this.render();
