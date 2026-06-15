@@ -59,12 +59,19 @@
     "platform:api": "tsx scripts/platform-api-server.ts",
     "platform:ingest": "tsx scripts/platform-ingest-worker.ts",
     "platform:ingest:once": "tsx scripts/platform-ingest-worker.ts --once",
+    "platform:ingest:fast": "tsx scripts/platform-ingest-fast-worker.ts",
+    "platform:ingest:fast:once": "tsx scripts/platform-ingest-fast-worker.ts --once",
     "platform:embed": "tsx scripts/platform-embedding-worker.ts",
     "platform:embed:once": "tsx scripts/platform-embedding-worker.ts --once",
     "platform:subscription": "tsx scripts/platform-subscription-worker.ts",
     "platform:subscription:once": "tsx scripts/platform-subscription-worker.ts --once",
     "platform:subscription:match": "tsx scripts/platform-subscription-worker.ts --once --match-only",
-    "platform:subscription:deliver": "tsx scripts/platform-subscription-worker.ts --once --deliver-only"
+    "platform:subscription:deliver": "tsx scripts/platform-subscription-worker.ts --once --deliver-only",
+    "platform:scheduler": "tsx scripts/platform-scheduler-worker.ts",
+    "platform:scheduler:once": "tsx scripts/platform-scheduler-worker.ts --once",
+    "platform:executor": "tsx scripts/platform-executor-worker.ts",
+    "platform:executor:once": "tsx scripts/platform-executor-worker.ts --once",
+    "platform:producer": "tsx scripts/platform-producer-dev.ts"
   },
   "devDependencies": {
     "@playwright/test": "^1.52.0",
@@ -101,6 +108,7 @@
     "@xenova/transformers": "^2.17.2",
     "canvas-confetti": "^1.9.4",
     "convex": "^1.32.0",
+    "cron-parser": "^5.5.0",
     "d3": "^7.9.0",
     "deck.gl": "^9.2.6",
     "dompurify": "^3.1.7",

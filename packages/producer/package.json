@@ -1,0 +1,13 @@
+{
+  "name": "@hxxworldmonitor/producer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Producer — workers + job scheduler (Phase 3 scaffold)",
+  "scripts": {
+    "scheduler": "npm run platform:scheduler --prefix ../..",
+    "executor": "npm run platform:executor --prefix ../..",
+    "dev": "npm run platform:producer --prefix ../..",
+    "ingest:fast": "npm run platform:ingest:fast --prefix ../..",
+    "ingest:full": "npm run platform:ingest --prefix ../.."
+  }
+}

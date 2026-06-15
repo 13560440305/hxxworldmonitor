@@ -175,6 +175,9 @@ export interface SubscriptionRow {
 }
 
 export async function loginAdmin(email: string, password: string): Promise<{ email: string }> {
+  if (!isPlatformApiConfigured()) {
+    throw new Error('请在 .env.local 配置 VITE_PLATFORM_API_URL 并重启 npm run dev');
+  }
   let resp: Response;
   try {
     resp = await fetch(`${publicPlatformPrefix()}/v1/admin/login`, {
@@ -186,11 +189,24 @@ export async function loginAdmin(email: string, password: string): Promise<{ ema
   } catch {
     throw new Error('登录超时：请确认 platform:api 已启动（npm run platform:api）');
   }
-  const data = await resp.json() as {
+  const text = await resp.text();
+  if (!text.trim()) {
+    throw new Error(
+      `无法连接 Platform API（HTTP ${resp.status}）：请先运行 npm run platform:api（默认 :8787）`,
+    );
+  }
+  let data: {
     token?: string;
     error?: string;
     user?: { email: string };
   };
+  try {
+    data = JSON.parse(text) as typeof data;
+  } catch {
+    throw new Error(
+      `Platform API 返回非 JSON（HTTP ${resp.status}）：请确认 platform:api 已启动且 VITE_PLATFORM_API_URL 正确`,
+    );
+  }
   if (!resp.ok) {
     throw new Error(data.error ?? `登录失败 (${resp.status})`);
   }
@@ -601,12 +617,108 @@ export async function runSubscriptionDeliver(id: string): Promise<unknown> {
   return parseJson(await adminFetch(`/v1/admin/subscriptions/${id}/deliver`, { method: 'POST' }));
 }
 
-export async function runMatchAll(): Promise<unknown> {
+export async function runMatchAll(): Promise<EnqueueJobResult> {
   return parseJson(await adminFetch('/v1/admin/run/match-all', { method: 'POST' }));
 }
 
-export async function runDeliverAll(): Promise<unknown> {
+export async function runDeliverAll(): Promise<EnqueueJobResult> {
   return parseJson(await adminFetch('/v1/admin/run/deliver-all', { method: 'POST' }));
+}
+
+export interface JobHandlerInfo {
+  key: string;
+  tier: string;
+}
+
+export interface JobDefinitionRow {
+  id: string;
+  handlerKey: string;
+  displayName: string;
+  tier: string;
+  scheduleKind: string;
+  cronExpr: string | null;
+  intervalSeconds: number | null;
+  timezone: string;
+  enabled: boolean;
+  maxConcurrency: number;
+  timeoutSec: number;
+  maxAttempts: number;
+  payload: Record<string, unknown>;
+  nextRunAt: string | null;
+  lastRunAt: string | null;
+}
+
+export interface JobRunRow {
+  id: string;
+  handlerKey: string;
+  definitionId: string | null;
+  status: string;
+  payload: Record<string, unknown>;
+  scheduledAt: string;
+  startedAt: string | null;
+  finishedAt: string | null;
+  attempt: number;
+  maxAttempts: number;
+  errorMessage: string | null;
+  stats: Record<string, unknown> | null;
+}
+
+export interface EnqueueJobResult {
+  ok: boolean;
+  queued?: boolean;
+  sync?: boolean;
+  runId?: string;
+  handlerKey?: string;
+  status?: string;
+  subscriptions?: number;
+  totalMatched?: number;
+  processed?: number;
+}
+
+export async function fetchJobHandlers(): Promise<JobHandlerInfo[]> {
+  const data = await parseJson<{ handlers: JobHandlerInfo[] }>(
+    await adminFetch('/v1/admin/jobs/handlers'),
+  );
+  return data.handlers ?? [];
+}
+
+export async function fetchJobDefinitions(): Promise<JobDefinitionRow[]> {
+  const data = await parseJson<{ definitions: JobDefinitionRow[] }>(
+    await adminFetch('/v1/admin/jobs/definitions'),
+  );
+  return data.definitions ?? [];
+}
+
+export async function fetchJobRuns(limit = 30): Promise<JobRunRow[]> {
+  const data = await parseJson<{ runs: JobRunRow[] }>(
+    await adminFetch(`/v1/admin/jobs/runs?limit=${limit}`),
+  );
+  return data.runs ?? [];
+}
+
+export async function enqueueAdminJob(
+  handlerKey: string,
+  payload?: Record<string, unknown>,
+): Promise<EnqueueJobResult> {
+  return parseJson(
+    await adminFetch('/v1/admin/jobs/enqueue', {
+      method: 'POST',
+      body: JSON.stringify({ handlerKey, payload }),
+    }),
+  );
+}
+
+export async function patchJobDefinitionEnabled(
+  handlerKey: string,
+  enabled: boolean,
+): Promise<JobDefinitionRow> {
+  const data = await parseJson<{ definition: JobDefinitionRow }>(
+    await adminFetch(`/v1/admin/jobs/definitions/${encodeURIComponent(handlerKey)}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ enabled }),
+    }),
+  );
+  return data.definition;
 }
 
 export interface LogFileInfo {

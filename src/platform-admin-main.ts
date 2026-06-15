@@ -38,6 +38,11 @@ import {
   deliverMergedForUser,
   runSubscriptionDeliver,
   runSubscriptionMatch,
+  fetchJobDefinitions,
+  fetchJobHandlers,
+  fetchJobRuns,
+  enqueueAdminJob,
+  patchJobDefinitionEnabled,
   testIntegrationProvider,
   saveIntegrationProvider,
   saveAiModel,
@@ -59,6 +64,10 @@ import {
   type UserApiKeySummary,
   type UserRow,
   type WorkspaceSettings,
+  type JobDefinitionRow,
+  type JobHandlerInfo,
+  type JobRunRow,
+  type EnqueueJobResult,
 } from '@/services/platform-admin-api';
 
 type Section = 'overview' | 'presets' | 'users' | 'subscriptions' | 'jobs' | 'logs' | 'settings' | 'integrations' | 'ai-models';
@@ -91,6 +100,10 @@ let toast = '';
 let toastErr = false;
 let sectionLoading = false;
 let jobRunning: 'match' | 'deliver' | null = null;
+let jobEnqueueKey: string | null = null;
+let jobDefinitions: JobDefinitionRow[] = [];
+let jobRuns: JobRunRow[] = [];
+let jobHandlers: JobHandlerInfo[] = [];
 let reloadGeneration = 0;
 let modalOpenCount = 0;
 let renderQueued = false;
@@ -225,6 +238,12 @@ async function reloadSection(): Promise<void> {
       if (integrationsPage > totalPages) integrationsPage = totalPages;
     } else if (section === 'ai-models') {
       aiModels = await fetchAiModels();
+    } else if (section === 'jobs') {
+      [jobDefinitions, jobRuns, jobHandlers] = await Promise.all([
+        fetchJobDefinitions(),
+        fetchJobRuns(40),
+        fetchJobHandlers(),
+      ]);
     }
     if (!meta) meta = await fetchAdminMeta();
   } catch (err) {
@@ -307,7 +326,7 @@ function renderShell(content: string): void {
           ${navBtn('presets', '可订阅项')}
           ${navBtn('users', '订阅用户')}
           ${navBtn('subscriptions', '用户订阅')}
-          ${navBtn('jobs', '匹配与发信')}
+          ${navBtn('jobs', '后台任务')}
           ${navBtn('logs', '系统日志')}
           ${navBtn('ai-models', 'AI 模型')}
           ${navBtn('integrations', '数据源配置')}
@@ -364,7 +383,7 @@ function sectionTitle(s: Section): string {
     presets: '可订阅项（预设目录）',
     users: '订阅用户',
     subscriptions: '用户订阅',
-    jobs: '匹配与发信',
+    jobs: '后台任务',
     logs: '系统日志',
     'ai-models': 'AI 模型',
     integrations: '数据源配置',
@@ -978,7 +997,126 @@ function presetsSectionHint(): string {
 }
 
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint"><strong>全量匹配</strong>：扫描新闻库写入待推送记录。<strong>全量发信</strong>：立即发送（忽略每日时间窗口）。日常自动发信由 <code>npm run platform:subscription</code> 按用户「每日发送时间」触发（单独/合并均适用，每天一轮）。</p>`;
+  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。本地调试同步执行可设 <code>PLATFORM_ALLOW_SYNC_JOBS=true</code>。</p>`;
+}
+
+function formatJobSchedule(def: JobDefinitionRow): string {
+  if (def.scheduleKind === 'cron' && def.cronExpr) {
+    return `cron ${def.cronExpr} (${def.timezone})`;
+  }
+  if (def.intervalSeconds) {
+    const s = def.intervalSeconds;
+    if (s >= 86400) return `每 ${Math.round(s / 86400)} 天`;
+    if (s >= 3600) return `每 ${Math.round(s / 3600)} 小时`;
+    if (s >= 60) return `每 ${Math.round(s / 60)} 分钟`;
+    return `每 ${s} 秒`;
+  }
+  return '—';
+}
+
+function jobRunStatusBadge(status: string): string {
+  const map: Record<string, { label: string; cls: string }> = {
+    pending: { label: '排队', cls: ' warn' },
+    running: { label: '运行中', cls: '' },
+    succeeded: { label: '成功', cls: '' },
+    failed: { label: '失败', cls: ' off' },
+    cancelled: { label: '取消', cls: ' off' },
+  };
+  const item = map[status] ?? { label: status, cls: ' warn' };
+  return `<span class="pa-badge${item.cls}">${escapeHtml(item.label)}</span>`;
+}
+
+function formatJobTime(iso: string | null): string {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString();
+}
+
+function formatEnqueueToast(result: EnqueueJobResult, action: string): string {
+  if (result.sync) {
+    if (result.totalMatched != null) {
+      return `${action}完成：匹配 ${result.totalMatched} 条`;
+    }
+    if (result.processed != null) {
+      return `${action}完成：处理 ${result.processed} 个订阅`;
+    }
+    return `${action}完成（同步）`;
+  }
+  const runId = result.runId ? result.runId.slice(0, 8) : '—';
+  return `${action}已入队（run ${runId}…），请确认 executor 在运行`;
+}
+
+function renderJobDefinitionsTable(): string {
+  if (!jobDefinitions.length) {
+    return '<p class="pa-muted">暂无任务定义。请启动 platform:api 并完成数据库 bootstrap。</p>';
+  }
+  const handlerSet = new Set(jobHandlers.map((h) => h.key));
+  const rows = jobDefinitions.map((def) => {
+    const registered = handlerSet.has(def.handlerKey);
+    const runDisabled = jobEnqueueKey === def.handlerKey || !registered;
+    return `
+    <tr>
+      <td><strong>${escapeHtml(def.displayName)}</strong><br><span class="pa-mono-sm pa-muted">${escapeHtml(def.handlerKey)}</span></td>
+      <td>${escapeHtml(formatJobSchedule(def))}</td>
+      <td><span class="pa-badge${def.tier === 'heavy' ? ' warn' : ''}">${escapeHtml(def.tier)}</span></td>
+      <td>
+        <label class="pa-inline-check">
+          <input type="checkbox" data-job-enabled="${escapeHtml(def.handlerKey)}" ${def.enabled ? 'checked' : ''} />
+          ${def.enabled ? '启用' : '停用'}
+        </label>
+      </td>
+      <td class="pa-muted">${formatJobTime(def.nextRunAt)}</td>
+      <td class="pa-muted">${formatJobTime(def.lastRunAt)}</td>
+      <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-run-job="${escapeHtml(def.handlerKey)}" ${runDisabled ? 'disabled' : ''}>
+          ${jobEnqueueKey === def.handlerKey ? '入队中…' : '立即运行'}
+        </button>
+        ${registered ? '' : '<span class="pa-muted">未注册</span>'}
+      </td>
+    </tr>`;
+  }).join('');
+  return `<h3 class="pa-subhead">定时任务</h3>
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderJobRunsTable(): string {
+  if (!jobRuns.length) {
+    return '<p class="pa-muted">暂无执行记录。</p>';
+  }
+  const rows = jobRuns.map((run) => {
+    const err = run.errorMessage
+      ? `<br><span class="pa-muted">${escapeHtml(run.errorMessage.slice(0, 120))}</span>`
+      : '';
+    const stats = run.stats && Object.keys(run.stats).length
+      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(JSON.stringify(run.stats).slice(0, 100))}</span>`
+      : '';
+    return `
+    <tr>
+      <td class="pa-mono-sm">${escapeHtml(run.id.slice(0, 8))}…</td>
+      <td><span class="pa-mono-sm">${escapeHtml(run.handlerKey)}</span></td>
+      <td>${jobRunStatusBadge(run.status)}</td>
+      <td class="pa-muted">${formatJobTime(run.scheduledAt)}</td>
+      <td class="pa-muted">${formatJobTime(run.startedAt)}</td>
+      <td class="pa-muted">${formatJobTime(run.finishedAt)}${err}${stats}</td>
+    </tr>`;
+  }).join('');
+  return `<h3 class="pa-subhead">最近执行</h3>
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>Run</th><th>Handler</th><th>状态</th><th>计划时间</th><th>开始</th><th>结束 / 结果</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
+}
+
+function renderJobsPanel(): string {
+  return `
+    ${jobsSectionHint()}
+    <h3 class="pa-subhead">订阅批量</h3>
+    <div class="pa-toolbar">
+      <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '入队中…' : '全量匹配'}</button>
+      <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '入队中…' : '全量发信'}</button>
+    </div>
+    ${renderJobDefinitionsTable()}
+    ${renderJobRunsTable()}`;
 }
 
 function sectionContent(): string {
@@ -995,12 +1133,7 @@ function sectionContent(): string {
     case 'subscriptions':
       return `${renderSubscriptionsFilterBar()}${renderSubscriptionsToolbar()}${renderSubscriptionsTable()}`;
     case 'jobs':
-      return `
-        ${jobsSectionHint()}
-        <div class="pa-toolbar">
-          <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '匹配中…' : '全量匹配'}</button>
-          <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '发信中…' : '全量发信'}</button>
-        </div>`;
+      return renderJobsPanel();
     case 'logs':
       return renderLogsPanel();
     case 'settings':
@@ -1127,18 +1260,60 @@ function bindSectionEvents(): void {
     jobRunning = 'match';
     render();
     void runMatchAll()
-      .then((r) => showToast(`匹配完成: ${JSON.stringify(r)}`))
+      .then((r) => showToast(formatEnqueueToast(r, '全量匹配')))
       .catch((e) => showToast(String(e), true))
-      .finally(() => { jobRunning = null; render(); });
+      .finally(() => {
+        jobRunning = null;
+        void reloadSection();
+      });
   });
   document.getElementById('deliverAllBtn')?.addEventListener('click', () => {
     if (jobRunning) return;
     jobRunning = 'deliver';
     render();
     void runDeliverAll()
-      .then((r) => showToast(`发信完成: ${JSON.stringify(r)}`))
+      .then((r) => showToast(formatEnqueueToast(r, '全量发信')))
       .catch((e) => showToast(String(e), true))
-      .finally(() => { jobRunning = null; render(); });
+      .finally(() => {
+        jobRunning = null;
+        void reloadSection();
+      });
+  });
+
+  app.querySelectorAll('[data-job-enabled]').forEach((el) => {
+    el.addEventListener('change', (e) => {
+      const input = e.target as HTMLInputElement;
+      const handlerKey = input.dataset.jobEnabled ?? '';
+      const enabled = input.checked;
+      input.disabled = true;
+      void patchJobDefinitionEnabled(handlerKey, enabled)
+        .then(() => showToast(enabled ? '已启用定时任务' : '已停用定时任务'))
+        .catch((err) => {
+          input.checked = !enabled;
+          showToast(String(err), true);
+        })
+        .finally(() => {
+          input.disabled = false;
+          void reloadSection();
+        });
+    });
+  });
+
+  app.querySelectorAll('[data-run-job]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const handlerKey = (el as HTMLElement).dataset.runJob ?? '';
+      if (!handlerKey || jobEnqueueKey) return;
+      const def = jobDefinitions.find((d) => d.handlerKey === handlerKey);
+      jobEnqueueKey = handlerKey;
+      render();
+      void enqueueAdminJob(handlerKey, def?.payload)
+        .then((r) => showToast(formatEnqueueToast(r, '任务')))
+        .catch((err) => showToast(String(err), true))
+        .finally(() => {
+          jobEnqueueKey = null;
+          void reloadSection();
+        });
+    });
   });
 
   document.getElementById('logServiceSelect')?.addEventListener('change', (e) => {

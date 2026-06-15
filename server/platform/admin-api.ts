@@ -25,7 +25,6 @@ import {
   createSubscription,
   deleteSubscription,
   getSubscriptionById,
-  listSubscriptions,
   listSubscriptionsPage,
   updateSubscription,
   type SubscriptionRules,
@@ -65,6 +64,17 @@ import { isAiProviderSlug } from './integration-provider-catalog.js';
 import { testAiModelConnection } from './ai-model-test-service.js';
 import { refreshHxxbotConfigCache } from '../_shared/hxxbot-config.js';
 import { testHxxbotConnection } from './hxxbot-test-service.js';
+import {
+  enqueuePlatformJob,
+  isSyncJobExecutionAllowed,
+  jobHandlersCatalog,
+} from './jobs/job-service.js';
+import { jobDefinitionToJson, jobRunToJson } from './jobs/job-admin.js';
+import {
+  listJobDefinitions,
+  listRecentJobRuns,
+  setJobDefinitionEnabled,
+} from './jobs/job-repository.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -793,18 +803,111 @@ export async function handlePlatformAdminRoutes(
   }
 
   if (req.method === 'POST' && path === '/platform/v1/admin/run/match-all') {
-    const result = await runMatchPassAll();
-    json(res, 200, { ok: true, ...result });
+    if (isSyncJobExecutionAllowed()) {
+      const result = await runMatchPassAll();
+      json(res, 200, { ok: true, sync: true, ...result });
+      return true;
+    }
+    const queued = await enqueuePlatformJob({
+      handlerKey: 'subscription-match-deliver',
+      payload: { mode: 'match' },
+    });
+    json(res, 202, { ok: true, queued: true, ...queued });
     return true;
   }
 
   if (req.method === 'POST' && path === '/platform/v1/admin/run/deliver-all') {
+    if (isSyncJobExecutionAllowed()) {
+      try {
+        const result = await deliverAllEnabledSubscriptions({ forceDeliver: true });
+        json(res, 200, { ok: true, sync: true, ...result });
+      } catch (err) {
+        json(res, 400, { error: String(err) });
+      }
+      return true;
+    }
     try {
-      const result = await deliverAllEnabledSubscriptions({ forceDeliver: true });
-      json(res, 200, { ok: true, ...result });
+      const queued = await enqueuePlatformJob({
+        handlerKey: 'subscription-match-deliver',
+        payload: { mode: 'deliver', forceDeliver: true },
+      });
+      json(res, 202, { ok: true, queued: true, ...queued });
     } catch (err) {
       json(res, 400, { error: String(err) });
     }
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/jobs/handlers') {
+    if (!checkAdmin(req, res, json)) return true;
+    json(res, 200, { handlers: jobHandlersCatalog() });
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/jobs/definitions') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    const defs = await listJobDefinitions();
+    json(res, 200, { definitions: defs.map(jobDefinitionToJson) });
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/jobs/runs') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    const limit = Number(url.searchParams.get('limit') ?? 30);
+    const runs = await listRecentJobRuns(limit);
+    json(res, 200, { runs: runs.map(jobRunToJson) });
+    return true;
+  }
+
+  if (req.method === 'POST' && path === '/platform/v1/admin/jobs/enqueue') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    let body: { handlerKey?: string; payload?: Record<string, unknown> } = {};
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      json(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (!body.handlerKey?.trim()) {
+      json(res, 400, { error: 'handlerKey is required' });
+      return true;
+    }
+    try {
+      const queued = await enqueuePlatformJob({
+        handlerKey: body.handlerKey.trim(),
+        payload: body.payload,
+      });
+      json(res, 202, { ok: true, queued: true, ...queued });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  if (req.method === 'PATCH' && /^\/platform\/v1\/admin\/jobs\/definitions\/[^/]+$/.test(path)) {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    const handlerKey = decodeURIComponent(path.split('/')[6]!);
+    let body: { enabled?: boolean } = {};
+    try {
+      body = JSON.parse(await readBody(req)) as typeof body;
+    } catch {
+      json(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    if (typeof body.enabled !== 'boolean') {
+      json(res, 400, { error: 'enabled (boolean) is required' });
+      return true;
+    }
+    const updated = await setJobDefinitionEnabled(handlerKey, body.enabled);
+    if (!updated) {
+      json(res, 404, { error: 'Job definition not found' });
+      return true;
+    }
+    json(res, 200, { definition: jobDefinitionToJson(updated) });
     return true;
   }
 

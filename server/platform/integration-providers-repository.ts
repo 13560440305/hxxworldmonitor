@@ -1,4 +1,4 @@
-import { getDefaultWorkspaceId, query } from '../_shared/db.js';
+import { getDefaultWorkspaceId, isDatabaseEnabled, query } from '../_shared/db.js';
 import { decryptSettingValue, encryptSettingValue } from '../_shared/setting-crypto.js';
 import {
   INTEGRATION_PROVIDER_CATALOG,
@@ -193,6 +193,7 @@ export async function getIntegrationProvider(
   slug: string,
   workspaceId?: string,
 ): Promise<ResolvedIntegrationProvider | null> {
+  if (!isDatabaseEnabled()) return null;
   const ws = workspaceId ?? getDefaultWorkspaceId();
   await ensureIntegrationProviderSeeds(ws);
   const res = await query<IntegrationProviderRow>(

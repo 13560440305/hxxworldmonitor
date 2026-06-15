@@ -1,9 +1,11 @@
 import { isDatabaseEnabled } from '../_shared/db.js';
 import type { PlatformLogger } from '../_shared/platform-logger.js';
 import { ensureIntegrationProviderSeeds } from './integration-providers-repository.js';
+import { seedJobDefinitions } from './jobs/job-seed.js';
 
 export interface PlatformSeedResult {
   integrationProvidersInserted: number;
+  jobDefinitionsSeeded: number;
 }
 
 /**
@@ -14,7 +16,7 @@ export async function runPlatformSeedBootstrap(opts?: {
   logger?: PlatformLogger;
 }): Promise<PlatformSeedResult> {
   const log = opts?.logger;
-  const result: PlatformSeedResult = { integrationProvidersInserted: 0 };
+  const result: PlatformSeedResult = { integrationProvidersInserted: 0, jobDefinitionsSeeded: 0 };
 
   if (!isDatabaseEnabled()) {
     return result;
@@ -25,6 +27,7 @@ export async function runPlatformSeedBootstrap(opts?: {
     if (result.integrationProvidersInserted > 0) {
       log?.info('seeded integration providers', { count: result.integrationProvidersInserted });
     }
+    result.jobDefinitionsSeeded = await seedJobDefinitions(log);
   } catch (err) {
     log?.error('platform seed bootstrap failed', err);
     throw err;

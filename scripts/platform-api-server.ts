@@ -63,6 +63,10 @@ import {
 import { isAutoMigrateEnabled } from '../server/platform/platform-db-bootstrap.js';
 import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { refreshHxxbotConfigCache } from '../server/_shared/hxxbot-config.js';
+import {
+  enqueuePlatformJob,
+  isSyncJobExecutionAllowed,
+} from '../server/platform/jobs/job-service.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -542,22 +546,42 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         json(res, 503, { error: 'DATABASE_URL not configured' });
         return;
       }
-      const result = await runMatchPassAll();
-      json(res, 200, { ok: true, ...result });
+      if (isSyncJobExecutionAllowed()) {
+        const result = await runMatchPassAll();
+        json(res, 200, { ok: true, sync: true, ...result });
+        return;
+      }
+      const queued = await enqueuePlatformJob({
+        handlerKey: 'subscription-match-deliver',
+        payload: { mode: 'match' },
+      });
+      json(res, 202, { ok: true, queued: true, ...queued });
       return;
     }
 
     if (req.method === 'POST' && path === '/platform/v1/subscriptions/deliver-all') {
-      if (!isDatabaseEnabled() || hxxbotNotConfigured()) {
-        json(res, 503, { error: `需要 DATABASE_URL，且 HXXBOT 须在管理后台「数据源配置」中启用并填写密钥` });
+      if (!isDatabaseEnabled()) {
+        json(res, 503, { error: 'DATABASE_URL not configured' });
         return;
       }
-      try {
-        const result = await deliverAllEnabledSubscriptions();
-        json(res, 200, { ok: true, ...result });
-      } catch (err) {
-        json(res, 400, { error: String(err) });
+      if (isSyncJobExecutionAllowed()) {
+        if (hxxbotNotConfigured()) {
+          json(res, 503, { error: `需要 DATABASE_URL，且 HXXBOT 须在管理后台「数据源配置」中启用并填写密钥` });
+          return;
+        }
+        try {
+          const result = await deliverAllEnabledSubscriptions();
+          json(res, 200, { ok: true, sync: true, ...result });
+        } catch (err) {
+          json(res, 400, { error: String(err) });
+        }
+        return;
       }
+      const queued = await enqueuePlatformJob({
+        handlerKey: 'subscription-match-deliver',
+        payload: { mode: 'deliver' },
+      });
+      json(res, 202, { ok: true, queued: true, ...queued });
       return;
     }
 
@@ -622,10 +646,24 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         if (raw) body = JSON.parse(raw) as typeof body;
       } catch { /* empty body ok */ }
 
-      const result = body.all
-        ? await runAllVariantIngest()
-        : await runRssIngest(body.variant ?? 'full', body.lang ?? 'en');
-      json(res, 200, { ok: true, result });
+      if (isSyncJobExecutionAllowed()) {
+        const result = body.all
+          ? await runAllVariantIngest()
+          : await runRssIngest(body.variant ?? 'full', body.lang ?? 'en');
+        json(res, 200, { ok: true, sync: true, result });
+        return;
+      }
+
+      const payload = body.all
+        ? { all: true }
+        : { variant: body.variant ?? 'full', lang: body.lang ?? 'en' };
+      const queued = await enqueuePlatformJob({ handlerKey: 'rss-ingest-full', payload });
+      json(res, 202, {
+        ok: true,
+        queued: true,
+        message: 'Job enqueued — ensure platform:executor is running',
+        ...queued,
+      });
       return;
     }
 
@@ -634,8 +672,13 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         json(res, 503, { error: 'DATABASE_URL not configured' });
         return;
       }
-      const result = await runColdTierPass();
-      json(res, 200, { ok: true, result });
+      if (isSyncJobExecutionAllowed()) {
+        const result = await runColdTierPass();
+        json(res, 200, { ok: true, sync: true, result });
+        return;
+      }
+      const queued = await enqueuePlatformJob({ handlerKey: 'cold-tier-archive' });
+      json(res, 202, { ok: true, queued: true, ...queued });
       return;
     }
 
@@ -732,11 +775,19 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
       } catch { /* empty */ }
       if (body.queue && isRedisEnabled()) {
         await publishEmbeddingJob({ batchSize: body.batchSize });
-        json(res, 202, { ok: true, queued: true });
+        json(res, 202, { ok: true, queued: true, via: 'redis' });
         return;
       }
-      const result = await runEmbeddingBatch({ batchSize: body.batchSize });
-      json(res, 200, { ok: true, result });
+      if (isSyncJobExecutionAllowed()) {
+        const result = await runEmbeddingBatch({ batchSize: body.batchSize });
+        json(res, 200, { ok: true, sync: true, result });
+        return;
+      }
+      const queued = await enqueuePlatformJob({
+        handlerKey: 'embedding-batch',
+        payload: { batchSize: body.batchSize },
+      });
+      json(res, 202, { ok: true, queued: true, ...queued });
       return;
     }
 

@@ -1,0 +1,6 @@
+{
+  "name": "@hxxworldmonitor/shared",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Shared infrastructure — source lives at repo root server/_shared/ (Phase 3 scaffold)"
+}

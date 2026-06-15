@@ -3,37 +3,22 @@ import { loadEnvLocal } from '../server/_shared/load-env.js';
 loadEnvLocal();
 
 import { closePool, isDatabaseEnabled } from '../server/_shared/db.js';
-import { runAllVariantIngest } from '../server/platform/rss-ingest.js';
+import { refreshHxxbotConfigCache } from '../server/_shared/hxxbot-config.js';
 import { ensurePlatformDatabaseReady } from '../server/platform/platform-db-startup.js';
 import { createPlatformLogger, installProcessLogHandlers } from '../server/_shared/platform-logger.js';
+import { runExecutorOnce } from '../server/platform/jobs/job-runner.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
-const log = createPlatformLogger('platform-ingest');
+const log = createPlatformLogger('platform-executor');
 installProcessLogHandlers(log);
 
-const INTERVAL_MS = Number(process.env.PLATFORM_INGEST_INTERVAL_MS ?? 600_000);
+const POLL_MS = Number(process.env.PLATFORM_EXECUTOR_POLL_MS ?? 5_000);
 const RUN_ONCE = process.argv.includes('--once');
+const WORKER_ID = `executor-${process.pid}`;
 
-async function tick(): Promise<void> {
-  const started = Date.now();
-  log.info('starting full ingest run');
-  try {
-    const results = await runAllVariantIngest();
-    for (const r of results) {
-      log.info('ingest variant complete', {
-        variant: r.variant,
-        lang: r.lang,
-        feeds: r.feedsTotal,
-        collected: r.itemsCollected,
-        upserted: r.itemsUpserted,
-        errors: r.errors,
-      });
-    }
-    log.info('ingest run finished', { durationMs: Date.now() - started });
-  } catch (err) {
-    log.error('ingest run failed', err);
-  }
+async function loopOnce(): Promise<boolean> {
+  return runExecutorOnce(WORKER_ID, log);
 }
 
 async function main(): Promise<void> {
@@ -43,16 +28,31 @@ async function main(): Promise<void> {
   }
 
   await ensurePlatformDatabaseReady({ logger: log });
-
-  await tick();
+  try {
+    await refreshHxxbotConfigCache();
+  } catch (err) {
+    log.warn('HXXBOT config load failed', err);
+  }
 
   if (RUN_ONCE) {
+    const ran = await loopOnce();
+    log.info('executor once complete', { ran });
     await closePool();
     return;
   }
 
-  setInterval(() => { void tick(); }, INTERVAL_MS);
-  log.info('scheduled ingest worker', { intervalMs: INTERVAL_MS });
+  log.info('executor worker started', { workerId: WORKER_ID, pollMs: POLL_MS });
+  while (true) {
+    try {
+      const ran = await loopOnce();
+      if (!ran) {
+        await new Promise((r) => setTimeout(r, POLL_MS));
+      }
+    } catch (err) {
+      log.error('executor loop error', err);
+      await new Promise((r) => setTimeout(r, POLL_MS));
+    }
+  }
 }
 
 process.on('SIGINT', () => { void closePool().then(() => process.exit(0)); });

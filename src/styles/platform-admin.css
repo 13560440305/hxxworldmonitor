@@ -286,6 +286,16 @@ body {
   color: #fbbf24;
 }
 
+.pa-subhead {
+  margin: 24px 0 10px;
+  font-size: 15px;
+  font-weight: 600;
+}
+
+.pa-subhead:first-of-type {
+  margin-top: 0;
+}
+
 .pa-mono-sm {
   font-family: ui-monospace, monospace;
   font-size: 12px;

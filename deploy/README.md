@@ -104,8 +104,13 @@ npm run dev
 |------|------|
 | `npm run platform:db:init` | 初始化 schema（首次） |
 | `npm run platform:db:migrate` | 手动触发迁移（可选；平时重启 `platform:api` 即可自动应用） |
-| `npm run platform:ingest:once` | 采集一轮 RSS |
-| `npm run platform:ingest` | 定时采集（10 分钟） |
+| `npm run platform:ingest:once` | 全量采集一轮 RSS（Tier2） |
+| `npm run platform:ingest` | 全量定时采集（默认 15 分钟） |
+| `npm run platform:ingest:fast:once` | 快讯子集采集一轮（Tier1） |
+| `npm run platform:ingest:fast` | 快讯定时采集（默认 5 分钟） |
+| `npm run platform:scheduler` | Job 调度 Worker（见 [Platform消费生产端拆分设计.md](../docs/Platform消费生产端拆分设计.md)） |
+| `npm run platform:executor` | Job 执行 Worker |
+| `npm run platform:producer` | 开发用：同终端启动 scheduler + executor |
 | `npm run platform:api` | REST API (:8787) |
 | `npm run dev` | 前端开发服务器 (:3000) |
 | `npm run platform:up` / `platform:down` | **需 Docker Desktop**，见下方 |
@@ -245,7 +250,7 @@ npm run preview
    ```
 3. 创建管理员（每个工作区仅一名）：`npm run platform:admin:init`
 4. 启动：`npm run platform:api` 与 `npm run dev`
-5. 浏览器打开：**http://localhost:3000/admin**，使用上述邮箱密码登录
+5. 浏览器打开：**http://localhost:3000/admin**，使用上述邮箱密码登录；侧边栏 **后台任务** 可查看定时定义、最近执行、手动入队（需同时运行 `platform:scheduler` 与 `platform:executor`）。
 
 重置管理员密码：`npm run platform:admin:init -- --reset-password`（需已存在管理员）
 
@@ -261,8 +266,13 @@ Admin API（登录后 Header `Authorization: Bearer {session_token}`）：
 | GET/POST/PATCH/DELETE | `/platform/v1/admin/presets` |
 | GET/POST | `/platform/v1/admin/users` |
 | GET/POST/PATCH/DELETE | `/platform/v1/admin/subscriptions` |
-| POST | `/platform/v1/admin/run/match-all` |
-| POST | `/platform/v1/admin/run/deliver-all` |
+| POST | `/platform/v1/admin/run/match-all`（默认 202 入队） |
+| POST | `/platform/v1/admin/run/deliver-all`（默认 202 入队） |
+| GET | `/platform/v1/admin/jobs/handlers` |
+| GET | `/platform/v1/admin/jobs/definitions` |
+| GET | `/platform/v1/admin/jobs/runs` |
+| POST | `/platform/v1/admin/jobs/enqueue` |
+| PATCH | `/platform/v1/admin/jobs/definitions/:handlerKey` |
 | GET | `/platform/v1/admin/logs`（日志索引或 tail，`?service=&date=&lines=`） |
 | GET | `/platform/v1/catalog`（公开，启用中的预设） |
 
@@ -274,6 +284,7 @@ Platform 各进程将日志写入 **`logs/{服务名}/{YYYY-MM-DD}.log`**（项�
 |--------|------|
 | `platform-api` | `npm run platform:api` |
 | `platform-ingest` | `npm run platform:ingest` / `platform:ingest:once` |
+| `platform-ingest-fast` | `npm run platform:ingest:fast` / `platform:ingest:fast:once` |
 | `platform-embed` | `npm run platform:embed` / `platform:embed:once` |
 | `platform-subscription` | `npm run platform:subscription` / `:once` |
 | `platform-db-migrate` | `npm run platform:db:migrate` |

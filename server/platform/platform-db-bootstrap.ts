@@ -32,6 +32,8 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '019_schema_user_api_keys.sql', optional: true },
   { file: '020_schema_user_delivery_preferences.sql', optional: true },
   { file: '021_schema_user_delivery_schedule_all_modes.sql', optional: true },
+  { file: '022_schema_job_scheduler.sql', optional: false },
+  { file: '023_schema_job_checkpoints.sql', optional: false },
 ] as const;
 
 export interface BootstrapResult {

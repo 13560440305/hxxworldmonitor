@@ -154,8 +154,11 @@ export function installProcessLogHandlers(log: PlatformLogger): void {
 export const PLATFORM_LOG_SERVICES = [
   'platform-api',
   'platform-ingest',
+  'platform-ingest-fast',
   'platform-embed',
   'platform-subscription',
+  'platform-scheduler',
+  'platform-executor',
   'platform-db-migrate',
   'platform-db-init',
 ] as const;

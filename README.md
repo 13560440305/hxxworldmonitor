@@ -1643,6 +1643,14 @@ Desktop release details, signing hooks, variant outputs, and clean-machine valid
 
 - [docs/RELEASE_PACKAGING.md](./docs/RELEASE_PACKAGING.md)
 
+
+last cmd:
+
+npm run platform:api
+npm run platform:scheduler
+npm run platform:executor
+npm run dev
+
 ---
 
 ## Roadmap

@@ -1,0 +1,11 @@
+{
+  "name": "@hxxworldmonitor/consumer",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Consumer — HTTP API + frontend (Phase 3 scaffold)",
+  "scripts": {
+    "dev": "npm run dev --prefix ../..",
+    "api": "npm run platform:api --prefix ../..",
+    "build": "npm run build --prefix ../.."
+  }
+}
