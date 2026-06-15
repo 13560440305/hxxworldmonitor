@@ -1,24 +1,2 @@
-import { randomBytes, scrypt, timingSafeEqual } from 'node:crypto';
-import { promisify } from 'node:util';
-
-const scryptAsync = promisify(scrypt);
-const PREFIX = 'scrypt';
-const KEY_LEN = 64;
-
-export async function hashPassword(password: string): Promise<string> {
-  const salt = randomBytes(16).toString('hex');
-  const derived = (await scryptAsync(password, salt, KEY_LEN)) as Buffer;
-  return `${PREFIX}$${salt}$${derived.toString('hex')}`;
-}
-
-export async function verifyPassword(password: string, stored: string | null | undefined): Promise<boolean> {
-  if (!stored?.startsWith(`${PREFIX}$`)) return false;
-  const parts = stored.split('$');
-  if (parts.length !== 3) return false;
-  const salt = parts[1]!;
-  const expectedHex = parts[2]!;
-  const derived = (await scryptAsync(password, salt, KEY_LEN)) as Buffer;
-  const expected = Buffer.from(expectedHex, 'hex');
-  if (expected.length !== derived.length) return false;
-  return timingSafeEqual(expected, derived);
-}
+/** @deprecated Import from @hxxworldmonitor/shared — compatibility shim */
+export * from '../../packages/shared/src/password.js';

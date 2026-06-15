@@ -1,0 +1,18 @@
+{
+  "name": "@hxxworldmonitor/platform-api",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts"
+  },
+  "dependencies": {
+    "@hxxworldmonitor/platform-core": "*",
+    "@hxxworldmonitor/shared": "*"
+  },
+  "devDependencies": {
+    "tsx": "^4.21.0",
+    "typescript": "^5.7.2"
+  }
+}

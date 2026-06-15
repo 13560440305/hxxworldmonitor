@@ -1,1 +1,2 @@
-export { getJobHandler, listJobHandlers, registerJobHandler } from './handlers/index.js';
+/** @deprecated Import from @hxxworldmonitor/platform-core — compatibility shim */
+export * from '../../../packages/platform-core/src/jobs/registry.js';

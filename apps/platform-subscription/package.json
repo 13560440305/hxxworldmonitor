@@ -1,0 +1,17 @@
+{
+  "name": "@hxxworldmonitor/platform-subscription",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "tsx src/main.ts",
+    "once": "tsx src/main.ts --once",
+    "match": "tsx src/main.ts --once --match-only",
+    "deliver": "tsx src/main.ts --once --deliver-only"
+  },
+  "dependencies": {
+    "@hxxworldmonitor/platform-core": "*",
+    "@hxxworldmonitor/shared": "*"
+  },
+  "devDependencies": { "tsx": "^4.21.0" }
+}

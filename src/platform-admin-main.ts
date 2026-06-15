@@ -41,6 +41,8 @@ import {
   fetchJobDefinitions,
   fetchJobHandlers,
   fetchJobRuns,
+  fetchJobCheckpoints,
+  fetchKgDagStatus,
   enqueueAdminJob,
   patchJobDefinitionEnabled,
   testIntegrationProvider,
@@ -67,6 +69,8 @@ import {
   type JobDefinitionRow,
   type JobHandlerInfo,
   type JobRunRow,
+  type JobCheckpointRow,
+  type KgDagStatus,
   type EnqueueJobResult,
 } from '@/services/platform-admin-api';
 
@@ -104,6 +108,10 @@ let jobEnqueueKey: string | null = null;
 let jobDefinitions: JobDefinitionRow[] = [];
 let jobRuns: JobRunRow[] = [];
 let jobHandlers: JobHandlerInfo[] = [];
+let jobCheckpoints: JobCheckpointRow[] = [];
+let kgDagStatus: KgDagStatus | null = null;
+type JobsTab = 'tasks' | 'dag' | 'checkpoints' | 'runs';
+let jobsTab: JobsTab = 'tasks';
 let reloadGeneration = 0;
 let modalOpenCount = 0;
 let renderQueued = false;
@@ -239,10 +247,12 @@ async function reloadSection(): Promise<void> {
     } else if (section === 'ai-models') {
       aiModels = await fetchAiModels();
     } else if (section === 'jobs') {
-      [jobDefinitions, jobRuns, jobHandlers] = await Promise.all([
+      [jobDefinitions, jobRuns, jobHandlers, jobCheckpoints, kgDagStatus] = await Promise.all([
         fetchJobDefinitions(),
         fetchJobRuns(40),
         fetchJobHandlers(),
+        fetchJobCheckpoints(),
+        fetchKgDagStatus(),
       ]);
     }
     if (!meta) meta = await fetchAdminMeta();
@@ -392,6 +402,20 @@ function sectionTitle(s: Section): string {
   return map[s];
 }
 
+function renderInfraStatus(): string {
+  if (!stats) return '';
+  const db = stats.database;
+  const dbText = db?.enabled
+    ? (db.connected ? 'PostgreSQL：已连接' : 'PostgreSQL：连接失败')
+    : 'PostgreSQL：未配置 DATABASE_URL';
+  const redis = stats.redis;
+  let redisText = 'Redis：未启用（可选）';
+  if (redis?.enabled) {
+    redisText = redis.ok ? 'Redis：已连接' : `Redis：异常${redis.error ? `（${redis.error}）` : ''}`;
+  }
+  return `<p>${dbText}</p><p class="pa-muted">${redisText}</p>`;
+}
+
 function renderOverview(): string {
   if (!stats) return '<p class="pa-muted">加载中…</p>';
   const hxxbotHint = stats.hxxbot.configured
@@ -404,6 +428,7 @@ function renderOverview(): string {
       <div class="pa-card"><div class="pa-card-label">订阅</div><div class="pa-card-value">${stats.subscriptions}</div></div>
       <div class="pa-card"><div class="pa-card-label">可订阅项</div><div class="pa-card-value">${stats.presetsEnabled}/${stats.presets}</div></div>
     </div>
+    ${renderInfraStatus()}
     <p>HXXBOT：${stats.hxxbot.configured ? '已配置' : '未配置（无法发邮件）'}${hxxbotHint}</p>
     <p class="pa-muted">API：${escapeHtml(stats.hxxbot.apiBaseUrl ?? '—')}</p>
     ${stats.logging ? `<p class="pa-muted">日志目录：${escapeHtml(stats.logging.logDir)}（级别 ${escapeHtml(stats.logging.level)}）</p>` : ''}`;
@@ -997,7 +1022,66 @@ function presetsSectionHint(): string {
 }
 
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。本地调试同步执行可设 <code>PLATFORM_ALLOW_SYNC_JOBS=true</code>。</p>`;
+  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>（PostgreSQL），由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。股票资讯 + 财报均成功后，若 <code>PLATFORM_KG_DAG_ENABLED</code> 未关闭，将自动入队 <code>knowledge-graph-build</code>。</p>`;
+}
+
+function kgDagReasonLabel(reason: string): string {
+  const map: Record<string, string> = {
+    ready: '可触发下游图谱构建',
+    'PLATFORM_KG_DAG_ENABLED=false': 'DAG 已关闭（PLATFORM_KG_DAG_ENABLED=false）',
+    'waiting for all upstream jobs': '等待上游任务均完成',
+    'knowledge graph already built for this cycle': '本周期图谱已构建',
+    'knowledge-graph-build already pending or running': '图谱任务已在队列或运行中',
+  };
+  return map[reason] ?? reason;
+}
+
+function renderKgDagPanel(): string {
+  if (!kgDagStatus) {
+    return '<p class="pa-muted">无法加载 DAG 状态。</p>';
+  }
+  const dag = kgDagStatus;
+  const readyBadge = dag.readyToEnqueue
+    ? '<span class="pa-badge">可入队</span>'
+    : `<span class="pa-badge warn">${escapeHtml(kgDagReasonLabel(dag.reason))}</span>`;
+  const upstreamRows = dag.upstream.map((key) => {
+    const cp = dag.checkpoints[key];
+    return `<tr>
+      <td class="pa-mono-sm">${escapeHtml(key)}</td>
+      <td class="pa-muted">${formatJobTime(cp?.completedAt ?? null)}</td>
+      <td class="pa-mono-sm pa-muted">${cp?.runId ? `${escapeHtml(cp.runId.slice(0, 8))}…` : '—'}</td>
+    </tr>`;
+  }).join('');
+  const downstreamCp = dag.checkpoints[dag.downstream];
+  return `
+    <p class="pa-muted">${dag.enabled ? '已启用' : '已关闭'} · 下游 <code>${escapeHtml(dag.downstream)}</code> · 活跃 run ${dag.activeDownstreamRuns} · ${readyBadge}</p>
+    ${dag.cycleStart ? `<p class="pa-muted">当前周期起点：${formatJobTime(dag.cycleStart)}</p>` : ''}
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>上游 Handler</th><th>最近成功</th><th>Run</th>
+    </tr></thead><tbody>${upstreamRows}</tbody></table></div>
+    <p class="pa-muted">下游 ${escapeHtml(dag.downstream)} 最近成功：${formatJobTime(downstreamCp?.completedAt ?? null)}</p>`;
+}
+
+function renderJobCheckpointsTable(): string {
+  if (!jobCheckpoints.length) {
+    return '<p class="pa-muted">暂无 checkpoint（任务首次成功后写入）。</p>';
+  }
+  const rows = jobCheckpoints.map((row) => {
+    const statsJson = row.checkpoint.stats && Object.keys(row.checkpoint.stats).length
+      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(JSON.stringify(row.checkpoint.stats).slice(0, 80))}</span>`
+      : '';
+    return `
+    <tr>
+      <td class="pa-mono-sm">${escapeHtml(row.handlerKey)}</td>
+      <td class="pa-muted">${formatJobTime(row.checkpoint.completedAt ?? null)}</td>
+      <td class="pa-mono-sm pa-muted">${row.checkpoint.runId ? `${escapeHtml(row.checkpoint.runId.slice(0, 8))}…` : '—'}</td>
+      <td class="pa-muted">${formatJobTime(row.updatedAt)}${statsJson}</td>
+    </tr>`;
+  }).join('');
+  return `
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>Handler</th><th>完成时间</th><th>Run</th><th>更新时间 / 统计</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
 function formatJobSchedule(def: JobDefinitionRow): string {
@@ -1074,7 +1158,7 @@ function renderJobDefinitionsTable(): string {
       </td>
     </tr>`;
   }).join('');
-  return `<h3 class="pa-subhead">定时任务</h3>
+  return `
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
       <th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
@@ -1101,22 +1185,55 @@ function renderJobRunsTable(): string {
       <td class="pa-muted">${formatJobTime(run.finishedAt)}${err}${stats}</td>
     </tr>`;
   }).join('');
-  return `<h3 class="pa-subhead">最近执行</h3>
+  return `
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
       <th>Run</th><th>Handler</th><th>状态</th><th>计划时间</th><th>开始</th><th>结束 / 结果</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 }
 
+function renderJobsTabBar(): string {
+  const tabs: { id: JobsTab; label: string; count?: number }[] = [
+    { id: 'tasks', label: '定时任务', count: jobDefinitions.length },
+    { id: 'dag', label: '知识图谱 DAG' },
+    { id: 'checkpoints', label: 'Checkpoint', count: jobCheckpoints.length },
+    { id: 'runs', label: '最近执行', count: jobRuns.length },
+  ];
+  const buttons = tabs.map(({ id, label, count }) => {
+    const active = jobsTab === id ? ' active' : '';
+    const badge = count != null && count > 0
+      ? `<span class="pa-tab-count">${count}</span>`
+      : '';
+    return `<button type="button" class="pa-tab-btn${active}" data-jobs-tab="${id}" role="tab" aria-selected="${jobsTab === id}">${escapeHtml(label)}${badge}</button>`;
+  }).join('');
+  return `<div class="pa-tabs" role="tablist">${buttons}</div>`;
+}
+
+function renderJobsTabPanel(): string {
+  switch (jobsTab) {
+    case 'tasks':
+      return `
+        <h3 class="pa-subhead">订阅批量</h3>
+        <div class="pa-toolbar">
+          <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '入队中…' : '全量匹配'}</button>
+          <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '入队中…' : '全量发信'}</button>
+        </div>
+        ${renderJobDefinitionsTable()}`;
+    case 'dag':
+      return renderKgDagPanel();
+    case 'checkpoints':
+      return renderJobCheckpointsTable();
+    case 'runs':
+      return renderJobRunsTable();
+    default:
+      return '';
+  }
+}
+
 function renderJobsPanel(): string {
   return `
     ${jobsSectionHint()}
-    <h3 class="pa-subhead">订阅批量</h3>
-    <div class="pa-toolbar">
-      <button class="pa-btn pa-btn-primary" id="matchAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'match' ? '入队中…' : '全量匹配'}</button>
-      <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '入队中…' : '全量发信'}</button>
-    </div>
-    ${renderJobDefinitionsTable()}
-    ${renderJobRunsTable()}`;
+    ${renderJobsTabBar()}
+    <div class="pa-tab-panel" role="tabpanel">${renderJobsTabPanel()}</div>`;
 }
 
 function sectionContent(): string {
@@ -1361,6 +1478,14 @@ function bindSectionEvents(): void {
       if (!next || next === section) return;
       section = next;
       void reloadSection();
+    });
+  });
+  app.querySelectorAll('[data-jobs-tab]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const next = (el as HTMLElement).dataset.jobsTab as JobsTab;
+      if (!next || next === jobsTab) return;
+      jobsTab = next;
+      render();
     });
   });
   document.getElementById('newIntegrationBtn')?.addEventListener('click', () => openCreateIntegrationModal());

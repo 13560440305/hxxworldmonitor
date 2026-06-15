@@ -1,6 +1,16 @@
 {
   "name": "@hxxworldmonitor/shared",
+  "version": "0.1.0",
   "private": true,
-  "version": "0.0.0",
-  "description": "Shared infrastructure — source lives at repo root server/_shared/ (Phase 3 scaffold)"
+  "type": "module",
+  "exports": {
+    "./*.js": "./src/*.ts",
+    "./*": "./src/*.ts"
+  },
+  "dependencies": {
+    "@hxxworldmonitor/platform-core": "*",
+    "@aws-sdk/client-s3": "^3.1062.0",
+    "pg": "^8.21.0",
+    "redis": "^6.0.0"
+  }
 }

@@ -1,11 +1,12 @@
 import { defineConfig, loadEnv, type Plugin } from 'vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import { resolve, dirname, extname } from 'path';
+import { fileURLToPath } from 'node:url';
 import { mkdir, readFile, writeFile } from 'fs/promises';
 import { brotliCompress } from 'zlib';
 import { promisify } from 'util';
 import pkg from './package.json';
-import { loadEnvLocal } from './server/_shared/load-env';
+import { loadEnvLocal } from './packages/shared/src/load-env.ts';
 
 // Same as platform:* scripts — ensures DATABASE_URL / PLATFORM_* available to sebuf middleware
 loadEnvLocal();
@@ -712,7 +713,10 @@ function youtubeLivePlugin(): Plugin {
   };
 }
 
+const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)));
+
 export default defineConfig({
+  envDir: repoRoot,
   define: {
     __APP_VERSION__: JSON.stringify(pkg.version),
   },

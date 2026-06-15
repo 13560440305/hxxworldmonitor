@@ -1,0 +1,19 @@
+{
+  "name": "@hxxworldmonitor/platform-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./*.js": "./src/*.ts",
+    "./*": "./src/*.ts",
+    "./jobs/*.js": "./src/jobs/*.ts",
+    "./jobs/*": "./src/jobs/*.ts"
+  },
+  "dependencies": {
+    "@hxxworldmonitor/shared": "*",
+    "@xenova/transformers": "^2.17.2",
+    "cron-parser": "^5.5.0",
+    "fast-xml-parser": "^5.3.7",
+    "pg": "^8.21.0"
+  }
+}

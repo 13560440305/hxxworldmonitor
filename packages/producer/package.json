@@ -2,7 +2,7 @@
   "name": "@hxxworldmonitor/producer",
   "private": true,
   "version": "0.0.0",
-  "description": "Producer â€” workers + job scheduler (Phase 3 scaffold)",
+  "description": "Producer â€?workers + job scheduler (Phase 3 scaffold)",
   "scripts": {
     "scheduler": "npm run platform:scheduler --prefix ../..",
     "executor": "npm run platform:executor --prefix ../..",

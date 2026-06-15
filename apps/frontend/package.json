@@ -1,0 +1,15 @@
+{
+  "name": "@hxxworldmonitor/frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --config vite.config.ts",
+    "build": "tsc --noEmit -p ../../tsconfig.json && vite build --config vite.config.ts",
+    "preview": "vite preview --config vite.config.ts"
+  },
+  "devDependencies": {
+    "vite": "*"
+  },
+  "description": "Main World Monitor SPA â€?config isolated; sources still at repo src/ during migration"
+}

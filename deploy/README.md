@@ -34,7 +34,7 @@ VITE_PLATFORM_API_URL=http://localhost:8787
 
 密码含 `#` 等特殊字符时需 URL 编码，例如 `ABC123###` → `ABC123%23%23%23`。
 
-完整 Platform 变量说明见 [`.env.platform.example`](./.env.platform.example)。
+完整 Platform 变量说明见 [`.env.platform.example`](./.env.platform.example)。Monorepo 拆分说明见 [docs/Platform-Monorepo拆分说明.md](../docs/Platform-Monorepo拆分说明.md)。
 
 | 组件 | Phase 1 是否必须 |
 |------|-----------------|
@@ -113,6 +113,7 @@ npm run dev
 | `npm run platform:producer` | 开发用：同终端启动 scheduler + executor |
 | `npm run platform:api` | REST API (:8787) |
 | `npm run dev` | 前端开发服务器 (:3000) |
+| `npm run admin:dev` | 管理后台独立工程 (:3001) |
 | `npm run platform:up` / `platform:down` | **需 Docker Desktop**，见下方 |
 
 ---

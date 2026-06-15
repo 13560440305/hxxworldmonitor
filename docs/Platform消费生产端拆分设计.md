@@ -133,6 +133,8 @@ flowchart LR
 | GET | `/platform/v1/admin/jobs/handlers` | 已注册 handler 列表 |
 | GET | `/platform/v1/admin/jobs/definitions` | 任务定义与 next_run |
 | GET | `/platform/v1/admin/jobs/runs?limit=30` | 最近执行记录 |
+| GET | `/platform/v1/admin/jobs/checkpoints` | 各 handler 最近 checkpoint |
+| GET | `/platform/v1/admin/jobs/dag-status` | 知识图谱 DAG 就绪状态 |
 | POST | `/platform/v1/admin/jobs/enqueue` | `{ "handlerKey": "rss-ingest-full", "payload": { "all": true } }` |
 | PATCH | `/platform/v1/admin/jobs/definitions/:handlerKey` | `{ "enabled": true }` |
 
@@ -177,7 +179,7 @@ deploy/
   producer/
 ```
 
-**Phase 1（当前）：** 已在单仓 `server/platform/jobs/` 落地调度器。**Phase 3 脚手架：** `packages/consumer|producer|shared`（源码仍在上级目录，npm 脚本委托根目录）。
+**Phase 3  Monorepo：** 见 [Platform-Monorepo拆分说明.md](./Platform-Monorepo拆分说明.md) · [MONOREPO.md](./MONOREPO.md)
 
 ---
 
@@ -218,9 +220,9 @@ npm run platform:ingest          # 可选 Tier2 全量
 | **P2** | Admin enqueue、API 改入队（ingest/embed/cold-tier） | **已完成**（含 Admin UI「后台任务」页） |
 | **P2** | Admin 触发 enqueue、迁移 POST /ingest/run |
 | **P3** | RSS fast/full 分档 | **已完成**（handler + ingest-fast worker + 调度种子） |
-| **P3** | Monorepo 拆分 | **脚手架**（`packages/*` + `deploy/consumer|producer`） |
+| **P3** | Monorepo 拆分 | **已落地**（`apps/*` + `packages/*`，见 [MONOREPO.md](./MONOREPO.md)） |
 | **P4** | stock-news / earnings / kg 真实数据源 | **MVP 已落地**（RSS→PG；图谱为标题匹配 MVP） |
-| **P5** | 图谱 DAG、checkpoint、Neo4j 可选 |
+| **P5** | 图谱 DAG、checkpoint、Neo4j 可选 | **部分完成**（DAG + checkpoint API/UI；Neo4j 未接） |
 
 ---
 

@@ -1,11 +1,13 @@
 # @hxxworldmonitor/shared
 
-Phase 3 Monorepo 脚手架（**源码尚未迁移**）。
+公共基础设施包（**源码目录**）。
 
-| 计划归属 | 当前路径 |
-|----------|----------|
-| DB / 迁移 | `server/_shared/db.ts`, `deploy/init/` |
-| 日志 | `server/_shared/platform-logger.ts` |
-| 环境变量 | `server/_shared/load-env.ts` |
+| 模块 | 路径 |
+|------|------|
+| 数据库 | `src/db.ts` |
+| 环境变量 | `src/load-env.ts`（优先 `apps/*/.env.local`，回退根目录） |
+| 日志 | `src/platform-logger.ts` |
+| 对象存储 | `src/blob-store.ts` |
+| 鉴权 | `src/admin-auth.ts`, `src/platform-session.ts` |
 
-完整拆分后，consumer 与 producer 包将依赖此 shared 包。
+`server/_shared/*.ts` 为兼容 shim，修改请编辑本目录后运行 `node scripts/generate-monorepo-shims.mjs`。

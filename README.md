@@ -1603,6 +1603,82 @@ Set `WS_RELAY_URL` (server-side, HTTPS) and `VITE_WS_RELAY_URL` (client-side, WS
 
 ---
 
+## Self-Hosted Platform (Monorepo)
+
+自托管 **Platform 数据层**（PostgreSQL 新闻 digest、订阅、Job 调度等）已拆为 **npm workspaces** 独立子工程。架构与目录说明见：
+
+- [docs/Platform-Monorepo拆分说明.md](./docs/Platform-Monorepo拆分说明.md)（中文，本次拆分完整说明）
+- [docs/MONOREPO.md](./docs/MONOREPO.md)（速查）
+- [deploy/README.md](./deploy/README.md)（环境配置与快速开始）
+
+### 前置条件
+
+1. 本机 **PostgreSQL**（`DATABASE_URL`）
+2. 复制环境变量：`copy .env.example .env.local`（至少配置 `DATABASE_URL`、`VITE_PLATFORM_API_URL=http://localhost:8787`）
+3. 首次创建管理员：`npm run platform:admin:init`（需 `PLATFORM_ADMIN_EMAIL` / `PLATFORM_ADMIN_PASSWORD`）
+
+各子工程可有独立配置，例如 `apps/platform-api/.env.local`、`apps/admin/.env.local`（优先于根目录 `.env.local`）。
+
+### 推荐本地启动（多终端）
+
+```powershell
+# 终端 1 — Platform API（:8787，自动 DB 迁移）
+npm run platform:api
+
+# 终端 2 — Job 调度 + 执行（生产端，无 HTTP）
+npm run platform:producer
+# 或分开：npm run platform:scheduler  与  npm run platform:executor
+
+# 终端 3 — 主仪表盘（:3000）
+npm run dev
+
+# 终端 4（可选）— 管理后台独立工程（:3001，推荐）
+npm run admin:dev
+```
+
+- 主站 Admin（兼容）：http://localhost:3000/admin  
+- 独立 Admin（推荐）：http://localhost:3001  
+- Platform API 健康检查：http://localhost:8787/platform/v1/health  
+
+### Platform 命令速查
+
+在**仓库根目录**执行（均通过 workspaces 调用对应 `apps/*` 子工程）：
+
+| 命令 | 说明 |
+|------|------|
+| **基础设施** | |
+| `npm run platform:up` | 启动 Docker Compose（Postgres/Redis/MinIO，需 Docker） |
+| `npm run platform:down` | 停止 Docker Compose |
+| `npm run platform:db:init` | 初始化数据库 schema |
+| `npm run platform:db:migrate` | 手动触发迁移（平时重启 `platform:api` 即可自动迁移） |
+| `npm run platform:admin:init` | 创建/重置 Platform 管理员 |
+| **消费端（HTTP）** | |
+| `npm run platform:api` | Platform REST API，默认 **:8787** |
+| `npm run dev` | 主仪表盘 Vite 开发服务器，**:3000** |
+| `npm run frontend:dev` | 同上，经 `apps/frontend` workspace 启动（Monorepo 迁移过渡） |
+| `npm run admin:dev` | 管理后台独立前端，**:3001** |
+| **生产端（无 HTTP）** | |
+| `npm run platform:scheduler` | Job 调度 Worker（cron/interval 入队） |
+| `npm run platform:executor` | Job 执行 Worker |
+| `npm run platform:producer` | 开发用：同终端启动 scheduler + executor |
+| `npm run platform:ingest:once` | 全量 RSS 采集一轮（Tier2） |
+| `npm run platform:ingest` | 全量 RSS 定时采集 |
+| `npm run platform:ingest:fast:once` | 快讯子集采集一轮（Tier1） |
+| `npm run platform:ingest:fast` | 快讯定时采集 |
+| `npm run platform:embed:once` | 向量化 batch 一轮 |
+| `npm run platform:embed` | 向量化定时 Worker |
+| `npm run platform:subscription:once` | 订阅匹配+发信一轮 |
+| `npm run platform:subscription` | 订阅定时 Worker |
+| `npm run platform:subscription:match` | 仅全量匹配 |
+| `npm run platform:subscription:deliver` | 仅全量发信 |
+| **Job 调试** | |
+| `npm run platform:scheduler:once` | 调度器 tick 一次 |
+| `npm run platform:executor:once` | 执行器 claim 一次 |
+
+首次有新闻数据：`npm run platform:ingest:once` 或 `npm run platform:ingest:fast:once`。使用 Job 队列时务必保持 **scheduler + executor** 运行；Admin「后台任务」页可查看定义与执行记录。
+
+---
+
 ## Contributing
 
 Contributions welcome! See [CONTRIBUTING.md](./CONTRIBUTING.md) for detailed guidelines, including the Sebuf RPC framework workflow, how to add data sources and RSS feeds, and our AI-assisted development policy. The project also maintains a [Code of Conduct](./CODE_OF_CONDUCT.md) and [Security Policy](./SECURITY.md) for responsible vulnerability disclosure.
@@ -1643,13 +1719,6 @@ Desktop release details, signing hooks, variant outputs, and clean-machine valid
 
 - [docs/RELEASE_PACKAGING.md](./docs/RELEASE_PACKAGING.md)
 
-
-last cmd:
-
-npm run platform:api
-npm run platform:scheduler
-npm run platform:executor
-npm run dev
 
 ---
 
