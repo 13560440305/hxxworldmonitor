@@ -60,6 +60,15 @@ import {
   createCustomIntegrationProvider,
   deleteCustomIntegrationProvider,
 } from './integration-providers-repository.js';
+import {
+  listEnginesPublic,
+  updateEngine,
+  createCustomEngine,
+} from './engines-repository.js';
+import {
+  listIngestBindingsPublic,
+  updateIngestBinding,
+} from './ingest-bindings-repository.js';
 import { isAiProviderSlug } from './integration-provider-catalog.js';
 import { testAiModelConnection } from './ai-model-test-service.js';
 import { refreshHxxbotConfigCache } from '@hxxworldmonitor/shared/hxxbot-config.js';
@@ -328,6 +337,102 @@ export async function handlePlatformAdminRoutes(
     return true;
   }
 
+  if (req.method === 'GET' && path === '/platform/v1/admin/engines') {
+    const engines = await listEnginesPublic();
+    json(res, 200, { engines, total: engines.length });
+    return true;
+  }
+
+  if (req.method === 'POST' && path === '/platform/v1/admin/engines') {
+    let body: {
+      slug?: string;
+      displayName?: string;
+      engineType?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      enabled?: boolean;
+      remarks?: string;
+    } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const engine = await createCustomEngine({
+        slug: body.slug ?? '',
+        displayName: body.displayName ?? '',
+        engineType: body.engineType ?? 'custom',
+        baseUrl: body.baseUrl ?? '',
+        apiKey: body.apiKey,
+        enabled: body.enabled,
+        remarks: body.remarks,
+      });
+      json(res, 201, { engine });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  const patchEngineMatch = path.match(/^\/platform\/v1\/admin\/engines\/([^/]+)$/);
+  if (req.method === 'PATCH' && patchEngineMatch) {
+    const slug = patchEngineMatch[1]!;
+    let body: {
+      displayName?: string;
+      engineType?: string;
+      baseUrl?: string;
+      apiKey?: string;
+      enabled?: boolean;
+      clearApiKey?: boolean;
+      remarks?: string;
+    } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const engine = await updateEngine(slug, {
+        displayName: body.displayName,
+        engineType: body.engineType,
+        baseUrl: body.baseUrl,
+        apiKey: body.apiKey,
+        enabled: body.enabled,
+        clearApiKey: body.clearApiKey,
+        remarks: body.remarks,
+      });
+      json(res, engine ? 200 : 404, engine ? { engine } : { error: 'Engine not found' });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/ingest-bindings') {
+    const bindings = await listIngestBindingsPublic();
+    json(res, 200, { bindings, total: bindings.length });
+    return true;
+  }
+
+  const patchBindingMatch = path.match(/^\/platform\/v1\/admin\/ingest-bindings\/([^/]+)$/);
+  if (req.method === 'PATCH' && patchBindingMatch) {
+    const sourceSlug = patchBindingMatch[1]!;
+    let body: { engineSlug?: string | null; enabled?: boolean } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw) body = JSON.parse(raw) as typeof body;
+    } catch { /* empty */ }
+    try {
+      const binding = await updateIngestBinding(sourceSlug, {
+        engineSlug: body.engineSlug,
+        enabled: body.enabled,
+      });
+      json(res, binding ? 200 : 404, binding ? { binding } : { error: 'Binding not found' });
+    } catch (err) {
+      json(res, 400, { error: String(err) });
+    }
+    return true;
+  }
+
   if (req.method === 'POST' && path === '/platform/v1/admin/integrations') {
     let body: {
       slug?: string;
@@ -337,6 +442,8 @@ export async function handlePlatformAdminRoutes(
       apiKey?: string;
       enabled?: boolean;
       remarks?: string;
+      ingestEngineSlug?: string | null;
+      crawlEngineSlug?: string | null;
     } = {};
     try {
       const raw = await readBody(req);
@@ -351,6 +458,7 @@ export async function handlePlatformAdminRoutes(
         apiKey: body.apiKey,
         enabled: body.enabled,
         remarks: body.remarks,
+        ingestEngineSlug: body.ingestEngineSlug ?? body.crawlEngineSlug,
       });
       json(res, 201, { provider });
     } catch (err) {
@@ -419,6 +527,8 @@ export async function handlePlatformAdminRoutes(
       enabled?: boolean;
       clearApiKey?: boolean;
       remarks?: string;
+      ingestEngineSlug?: string | null;
+      crawlEngineSlug?: string | null;
     } = {};
     try {
       const raw = await readBody(req);
@@ -434,6 +544,7 @@ export async function handlePlatformAdminRoutes(
         enabled: body.enabled,
         clearApiKey: body.clearApiKey,
         remarks: body.remarks,
+        ingestEngineSlug: body.ingestEngineSlug ?? body.crawlEngineSlug,
       });
       if (slug === 'hxxbot') await refreshHxxbotConfigCache();
       json(res, provider ? 200 : 404, provider ? { provider } : { error: 'Provider not found' });

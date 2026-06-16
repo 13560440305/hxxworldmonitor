@@ -34,6 +34,8 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '021_schema_user_delivery_schedule_all_modes.sql', optional: true },
   { file: '022_schema_job_scheduler.sql', optional: false },
   { file: '023_schema_job_checkpoints.sql', optional: false },
+  { file: '024_schema_integration_providers_crawl_engine.sql', optional: true },
+  { file: '025_schema_engines_ingest_bindings.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {
@@ -172,6 +174,10 @@ async function isMigrationAlreadyApplied(client: pg.Client, filename: string): P
       return columnExists(client, 'briefs', 'source_refs_json');
     case '019_schema_user_api_keys.sql':
       return columnExists(client, 'users', 'api_key_hash');
+    case '024_schema_integration_providers_crawl_engine.sql':
+      return columnExists(client, 'integration_providers', 'crawl_engine_slug');
+    case '025_schema_engines_ingest_bindings.sql':
+      return tableExists(client, 'engines');
     default:
       return false;
   }

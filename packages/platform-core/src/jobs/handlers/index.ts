@@ -7,8 +7,8 @@ import {
   runEuEquityGraphIngest,
   runHkEquityGraphIngest,
   runUsEquityGraphIngest,
-  runCnDisclosureIngest,
 } from '../../enterprise-graph/sources/index.js';
+import { runIngestPlugin } from '../../ingest-plugins/run-ingest-plugin.js';
 import { runColdTierPass } from '../../cold-tier-worker.js';
 import { runAllVariantIngest, runFastVariantIngest, runRssIngest, runRssIngestFast } from '../../rss-ingest.js';
 import { runEmbeddingBatch } from '../../research-service.js';
@@ -164,12 +164,12 @@ const enterpriseGraphIngestEuHandler: JobHandler = {
   },
 };
 
-/** CN A-share disclosures — Firecrawl + CNINFO (no official data API). */
+/** CN A-share disclosures — cninfo-disclosure ingest plugin. */
 const disclosureIngestCnHandler: JobHandler = {
   key: 'disclosure-ingest-cn',
   tier: 'heavy',
   async run(ctx: JobContext) {
-    const result = await runCnDisclosureIngest(ctx);
+    const result = await runIngestPlugin('cninfo-disclosure', ctx);
     return { stats: { ...result } };
   },
 };

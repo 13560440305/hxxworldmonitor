@@ -5,6 +5,7 @@ import {
   getProviderDefinition,
   type IntegrationProviderDefinition,
 } from './integration-provider-catalog.js';
+import type { IngestBindingPublic } from './ingest-bindings-repository.js';
 
 export interface IntegrationProviderRow {
   workspace_id: string;
@@ -33,6 +34,10 @@ export interface IntegrationProviderPublic {
   sortOrder: number;
   custom: boolean;
   remarks: string;
+  /** From data_source_ingest_bindings when source uses an ingest plugin. */
+  ingestEngineSlug: string | null;
+  ingestPluginKey: string | null;
+  ingestPluginDisplayName: string | null;
 }
 
 export interface ResolvedIntegrationProvider {
@@ -62,7 +67,7 @@ function isAiProviderConfigured(
   return Boolean(apiKey);
 }
 
-const CUSTOM_SLUG_RE = /^[a-z][a-z0-9_-]{1,47}$/;
+const CUSTOM_SLUG_RE = /^[a-z][a-z0-9_-]{1,48}$/;
 
 export const DATA_INTEGRATION_CATEGORIES = [
   'platform',
@@ -73,6 +78,7 @@ export const DATA_INTEGRATION_CATEGORIES = [
   'aviation',
   'cyber',
   'relay',
+  'disclosure',
   'custom',
 ] as const;
 
@@ -84,12 +90,16 @@ function normalizeRemarks(raw: string | null | undefined): string {
   return t;
 }
 
-function rowToPublic(row: IntegrationProviderRow): IntegrationProviderPublic {
+function rowToPublic(
+  row: IntegrationProviderRow,
+  binding: IngestBindingPublic | null,
+): IntegrationProviderPublic {
   const def = getProviderDefinition(row.slug);
   const dbKey = decryptSettingValue(row.api_key_enc) ?? '';
   const baseUrl = (row.base_url?.trim() || def?.defaultBaseUrl || '').replace(/\/+$/, '');
   const modelName = row.model_name?.trim() || def?.defaultModel || '';
   const isAi = def?.category === 'ai' || row.category === 'ai';
+  const isDisclosure = def?.category === 'disclosure' || row.category === 'disclosure';
   return {
     slug: row.slug,
     displayName: row.display_name,
@@ -101,10 +111,15 @@ function rowToPublic(row: IntegrationProviderRow): IntegrationProviderPublic {
     apiKeyHint: maskApiKey(dbKey),
     configured: isAi
       ? isAiProviderConfigured(def, baseUrl, modelName, dbKey)
-      : Boolean(baseUrl && dbKey) || (def?.apiKeyOptional && Boolean(baseUrl)),
+      : isDisclosure
+        ? Boolean(baseUrl)
+        : Boolean(baseUrl && dbKey) || (def?.apiKeyOptional && Boolean(baseUrl)),
     sortOrder: row.sort_order,
     custom: Boolean(row.is_custom),
     remarks: row.remarks?.trim() || def?.defaultRemarks || '',
+    ingestEngineSlug: binding?.engineSlug ?? null,
+    ingestPluginKey: binding?.ingestPluginKey ?? null,
+    ingestPluginDisplayName: binding?.ingestPluginDisplayName ?? null,
   };
 }
 
@@ -167,11 +182,18 @@ const CATEGORY_SORT_SQL = `
     WHEN 'aviation' THEN 6
     WHEN 'cyber' THEN 7
     WHEN 'relay' THEN 8
-    WHEN 'crawl' THEN 9
-    WHEN 'disclosure' THEN 10
-    WHEN 'ai' THEN 11
+    WHEN 'disclosure' THEN 9
+    WHEN 'ai' THEN 10
     ELSE 99
   END`;
+
+async function loadBindingsMap(workspaceId: string): Promise<Map<string, IngestBindingPublic>> {
+  const { listIngestBindingsPublic } = await import('./ingest-bindings-repository.js');
+  const bindings = await listIngestBindingsPublic(workspaceId);
+  return new Map(bindings.map((b) => [b.sourceSlug, b]));
+}
+
+export type IntegrationListScope = 'all' | 'data' | 'ai';
 
 export async function listIntegrationProvidersPublic(
   workspaceId?: string,
@@ -179,13 +201,14 @@ export async function listIntegrationProvidersPublic(
 ): Promise<IntegrationProviderPublic[]> {
   const ws = workspaceId ?? getDefaultWorkspaceId();
   await ensureIntegrationProviderSeeds(ws);
+  const bindings = await loadBindingsMap(ws);
   const res = await query<IntegrationProviderRow>(
     `SELECT workspace_id, slug, display_name, category, base_url, api_key_enc, model_name, enabled, sort_order, is_custom, remarks
      FROM integration_providers WHERE workspace_id = $1
      ORDER BY ${CATEGORY_SORT_SQL}, sort_order ASC, display_name ASC`,
     [ws],
   );
-  const rows = res.rows.map((row) => rowToPublic(row));
+  const rows = res.rows.map((row) => rowToPublic(row, bindings.get(row.slug) ?? null));
   if (scope === 'ai') return rows.filter((p) => p.category === 'ai');
   if (scope === 'data') return rows.filter((p) => p.category !== 'ai');
   return rows;
@@ -213,6 +236,7 @@ export async function getIntegrationProvider(
   const modelName = row.model_name?.trim() || def?.defaultModel || '';
   const apiKey = decryptSettingValue(row.api_key_enc) ?? '';
   const isAi = def?.category === 'ai' || row.category === 'ai';
+  const isDisclosure = def?.category === 'disclosure' || row.category === 'disclosure';
 
   if (!row.enabled) {
     return {
@@ -229,6 +253,8 @@ export async function getIntegrationProvider(
   if (isAi) {
     if (!baseUrl || !modelName) return null;
     if (!def?.apiKeyOptional && !apiKey) return null;
+  } else if (isDisclosure) {
+    if (!baseUrl) return null;
   } else if (!baseUrl || (!def?.apiKeyOptional && !apiKey)) {
     return null;
   }
@@ -253,6 +279,7 @@ export async function createCustomIntegrationProvider(
     apiKey?: string;
     enabled?: boolean;
     remarks?: string;
+    ingestEngineSlug?: string | null;
   },
   workspaceId?: string,
 ): Promise<IntegrationProviderPublic> {
@@ -284,13 +311,23 @@ export async function createCustomIntegrationProvider(
     ? encryptSettingValue(input.apiKey.trim())
     : null;
   const remarks = normalizeRemarks(input.remarks);
+  const category = input.category.trim();
 
   await query(
     `INSERT INTO integration_providers
        (workspace_id, slug, display_name, category, base_url, api_key_enc, enabled, sort_order, is_custom, remarks)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, TRUE, $9)`,
-    [ws, slug, displayName, input.category.trim(), baseUrl, apiKeyEnc, input.enabled !== false, sortOrder, remarks],
+    [ws, slug, displayName, category, baseUrl, apiKeyEnc, input.enabled !== false, sortOrder, remarks],
   );
+
+  if (category === 'disclosure' && input.ingestEngineSlug) {
+    const { upsertIngestBindingForSource } = await import('./ingest-bindings-repository.js');
+    await upsertIngestBindingForSource(slug, {
+      engineSlug: input.ingestEngineSlug,
+      ingestPluginKey: `${slug}-disclosure`,
+      enabled: true,
+    });
+  }
 
   invalidateIntegrationProviderCache();
   const list = await listIntegrationProvidersPublic(ws, 'data');
@@ -331,6 +368,7 @@ export async function updateIntegrationProvider(
     enabled?: boolean;
     clearApiKey?: boolean;
     remarks?: string;
+    ingestEngineSlug?: string | null;
   },
   workspaceId?: string,
 ): Promise<IntegrationProviderPublic | null> {
@@ -388,13 +426,20 @@ export async function updateIntegrationProvider(
     [ws, slug, displayName, category, baseUrl, apiKeyEnc, modelName, enabled, remarks],
   );
 
+  if (patch.ingestEngineSlug !== undefined) {
+    const { getIngestBindingForSource, updateIngestBinding } = await import('./ingest-bindings-repository.js');
+    const binding = await getIngestBindingForSource(slug, ws);
+    if (binding) {
+      await updateIngestBinding(slug, { engineSlug: patch.ingestEngineSlug }, ws);
+    }
+  }
+
   invalidateIntegrationProviderCache();
   const scope = def?.category === 'ai' || row.category === 'ai' ? 'ai' : 'data';
   const list = await listIntegrationProvidersPublic(ws, scope);
   return list.find((p) => p.slug === slug) ?? null;
 }
 
-/** Invalidate in-memory cache after admin updates (simple TTL cache). */
 let cacheExpiresAt = 0;
 const cache = new Map<string, ResolvedIntegrationProvider | null>();
 

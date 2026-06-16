@@ -19,6 +19,7 @@ import {
   deleteIntegrationProvider,
   fetchAdminUserApiKey,
   fetchIntegrationProviders,
+  fetchEngines,
   fetchAiModels,
   fetchLogIndex,
   fetchLogTail,
@@ -47,6 +48,7 @@ import {
   patchJobDefinitionEnabled,
   testIntegrationProvider,
   saveIntegrationProvider,
+  saveEngine,
   saveAiModel,
   testAiModel,
   saveDefaultUserPassword,
@@ -56,6 +58,7 @@ import {
   setStoredAdminToken,
   updateUser,
   type IntegrationProviderRow,
+  type EngineRow,
   type AdminMeta,
   type AdminStats,
   type LogFileInfo,
@@ -74,7 +77,7 @@ import {
   type EnqueueJobResult,
 } from '@/services/platform-admin-api';
 
-type Section = 'overview' | 'presets' | 'users' | 'subscriptions' | 'jobs' | 'logs' | 'settings' | 'integrations' | 'ai-models';
+type Section = 'overview' | 'presets' | 'users' | 'subscriptions' | 'jobs' | 'logs' | 'settings' | 'integrations' | 'engines' | 'ai-models';
 
 let section: Section = 'overview';
 let stats: AdminStats | null = null;
@@ -93,6 +96,7 @@ let logService = 'platform-api';
 let logDate = '';
 let workspaceSettings: WorkspaceSettings | null = null;
 let integrationProviders: IntegrationProviderRow[] = [];
+let engines: EngineRow[] = [];
 let integrationsPage = 1;
 const INTEGRATIONS_PAGE_SIZE = 10;
 let aiModels: IntegrationProviderRow[] = [];
@@ -241,9 +245,14 @@ async function reloadSection(): Promise<void> {
     } else if (section === 'settings') {
       workspaceSettings = await fetchWorkspaceSettings();
     } else if (section === 'integrations') {
-      integrationProviders = await fetchIntegrationProviders();
+      [integrationProviders, engines] = await Promise.all([
+        fetchIntegrationProviders(),
+        fetchEngines(),
+      ]);
       const totalPages = Math.max(1, Math.ceil(integrationProviders.length / INTEGRATIONS_PAGE_SIZE));
       if (integrationsPage > totalPages) integrationsPage = totalPages;
+    } else if (section === 'engines') {
+      engines = await fetchEngines();
     } else if (section === 'ai-models') {
       aiModels = await fetchAiModels();
     } else if (section === 'jobs') {
@@ -340,6 +349,7 @@ function renderShell(content: string): void {
           ${navBtn('logs', '系统日志')}
           ${navBtn('ai-models', 'AI 模型')}
           ${navBtn('integrations', '数据源配置')}
+          ${navBtn('engines', '采集引擎')}
           ${navBtn('settings', '系统设置')}
         </nav>
         <div class="pa-sidebar-foot">
@@ -397,6 +407,7 @@ function sectionTitle(s: Section): string {
     logs: '系统日志',
     'ai-models': 'AI 模型',
     integrations: '数据源配置',
+    engines: '采集引擎',
     settings: '系统设置',
   };
   return map[s];
@@ -622,7 +633,6 @@ const INTEGRATION_CATEGORY_LABELS: Record<string, string> = {
   aviation: '航空',
   cyber: '威胁情报',
   relay: 'Relay 中继',
-  crawl: '采集引擎',
   disclosure: '上市公司披露',
   custom: '自定义',
 };
@@ -636,13 +646,18 @@ const INTEGRATION_CATEGORY_HINTS: Record<string, string> = {
   aviation: '民航航班与 ICAO 航空数据',
   cyber: '恶意 URL、IP 信誉、威胁情报',
   relay: '自托管 AIS/RSS/Telegram 等 WebSocket 中继',
-  crawl: 'Firecrawl 等网页采集引擎（API Key）；具体抓取 URL 写在 executor 代码中',
   disclosure: '巨潮资讯网等法定披露站点（通常无需 API Key）；公告/财报由 executor 多阶段抓取解析',
 };
 
 const PRESET_INTEGRATION_CATEGORIES = [
-  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay', 'crawl', 'disclosure',
+  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay', 'disclosure',
 ] as const;
+
+const ENGINE_TYPE_LABELS: Record<string, string> = {
+  crawl: '网页采集',
+  browser: '浏览器自动化',
+  custom: '自定义',
+};
 
 const CUSTOM_CATEGORY_VALUE = '__custom__';
 
@@ -676,6 +691,60 @@ function bindIntegrationCategoryToggle(root: HTMLElement, selectId: string, wrap
   };
   select.addEventListener('change', sync);
   sync();
+}
+
+function listConfiguredEngines(): EngineRow[] {
+  return engines;
+}
+
+function crawlEngineSelectOptions(selected: string | null): string {
+  const engineList = listConfiguredEngines();
+  const opts = engineList.map((e) =>
+    `<option value="${escapeHtml(e.slug)}"${e.slug === selected ? ' selected' : ''}>${escapeHtml(e.displayName)} (${escapeHtml(e.slug)})</option>`,
+  );
+  if (!selected || !engineList.some((e) => e.slug === selected)) {
+    opts.unshift(`<option value=""${!selected ? ' selected' : ''}>— 请选择 —</option>`);
+  }
+  return opts.join('');
+}
+
+function crawlEngineFieldHtml(selected: string | null): string {
+  const engineList = listConfiguredEngines();
+  const hint = engineList.length === 0
+    ? '<p class="pa-muted">请先在侧栏「采集引擎」中配置 Firecrawl；披露类数据源在此引用，无需重复填写 Key。</p>'
+    : '<p class="pa-muted">引用「采集引擎」中的抓取服务，全站 API Key 只需配置一次。</p>';
+  return `<div class="pa-field"><label>采集引擎</label>
+    <select id="int_crawl_engine">${crawlEngineSelectOptions(selected)}</select>
+    ${hint}</div>`;
+}
+
+function bindDisclosureCrawlEngineToggle(root: HTMLElement, categorySelectId: string, wrapId: string): void {
+  const select = root.querySelector(`#${categorySelectId}`) as HTMLSelectElement | null;
+  const wrap = root.querySelector(`#${wrapId}`) as HTMLElement | null;
+  if (!select || !wrap) return;
+  const sync = () => {
+    const cat = select.value === CUSTOM_CATEGORY_VALUE
+      ? (root.querySelector('#int_new_category_custom') as HTMLInputElement | null)?.value.trim() || 'custom'
+      : select.value;
+    wrap.hidden = cat !== 'disclosure';
+  };
+  select.addEventListener('change', sync);
+  const custom = root.querySelector('#int_new_category_custom') as HTMLInputElement | null;
+  custom?.addEventListener('input', sync);
+  sync();
+}
+
+function readCrawlEngineSlug(root: HTMLElement): string | null {
+  const el = root.querySelector('#int_crawl_engine') as HTMLSelectElement | null;
+  if (!el) return null;
+  const v = el.value.trim();
+  return v || null;
+}
+
+function crawlEngineLabel(slug: string | null | undefined): string {
+  if (!slug) return '—';
+  const e = engines.find((x) => x.slug === slug);
+  return e ? e.displayName : slug;
 }
 
 function readIntegrationCategory(root: HTMLElement, selectId: string, customId: string): string {
@@ -832,11 +901,15 @@ function renderIntegrationsPanel(): string {
       ? '<span class="pa-badge">启用</span>'
       : '<span class="pa-badge off">禁用</span>';
     const customBadge = p.custom ? ' <span class="pa-badge">自定义</span>' : '';
+    const crawlRef = p.category === 'disclosure'
+      ? `<span class="pa-mono-sm">${escapeHtml(crawlEngineLabel(p.ingestEngineSlug))}</span>`
+      : '<span class="pa-muted">—</span>';
     return `
     <tr>
       <td class="pa-muted pa-col-index">${rowOffset + i + 1}</td>
       <td>${escapeHtml(p.displayName)}${customBadge}<div class="pa-muted pa-mono-sm">${escapeHtml(p.slug)}</div></td>
       <td title="${escapeHtml(catHint)}">${escapeHtml(cat)}</td>
+      <td>${crawlRef}</td>
       <td class="pa-muted" title="${escapeHtml(p.baseUrl)}">${escapeHtml(p.baseUrl || '—')}</td>
       <td>${formatRemarksCell(p.remarks)}</td>
       <td>${status}</td>
@@ -848,11 +921,44 @@ function renderIntegrationsPanel(): string {
     </tr>`;
   }).join('');
   return `
-    <p class="pa-muted">外部数据源按<strong>分组</strong>排列。常规 REST API 配置 <strong>Base URL + API Key</strong>；<strong>采集引擎</strong>（如 Firecrawl）与<strong>上市公司披露</strong>（如巨潮资讯网）用于 executor 多阶段抓取流水线，具体请求地址写在代码中。AI 摘要请至「AI 模型」。</p>
+    <p class="pa-muted">外部数据源按<strong>分组</strong>排列。常规 REST API 配置 <strong>Base URL + API Key</strong>；需抓取的披露类数据源在编辑页选择「采集引擎」（凭证在侧栏「采集引擎」菜单配置）。AI 摘要请至「AI 模型」。</p>
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-      <th class="pa-col-index">序号</th><th>数据源</th><th>分组</th><th>Base URL</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
-    </tr></thead><tbody>${rows || '<tr><td colspan="8" class="pa-muted">暂无数据源</td></tr>'}</tbody></table></div>
+      <th class="pa-col-index">序号</th><th>数据源</th><th>分组</th><th>采集引擎</th><th>Base URL</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="9" class="pa-muted">暂无数据源</td></tr>'}</tbody></table></div>
     ${renderTablePagination('integrations', page, totalPages, total, INTEGRATIONS_PAGE_SIZE)}`;
+}
+
+function renderEnginesPanel(): string {
+  if (sectionLoading && !engines.length) {
+    return '<p class="pa-muted">加载中…</p>';
+  }
+  const rows = engines.map((e) => {
+    const typeLabel = ENGINE_TYPE_LABELS[e.engineType] ?? e.engineType;
+    const status = e.configured
+      ? `<span class="pa-badge">已配置${e.apiKeyHint ? ` ${escapeHtml(e.apiKeyHint)}` : ''}</span>`
+      : '<span class="pa-badge off">未配置</span>';
+    const enabled = e.enabled
+      ? '<span class="pa-badge">启用</span>'
+      : '<span class="pa-badge off">禁用</span>';
+    const customBadge = e.custom ? ' <span class="pa-badge">自定义</span>' : '';
+    return `
+    <tr>
+      <td>${escapeHtml(e.displayName)}${customBadge}<div class="pa-muted pa-mono-sm">${escapeHtml(e.slug)}</div></td>
+      <td>${escapeHtml(typeLabel)}</td>
+      <td class="pa-muted" title="${escapeHtml(e.baseUrl)}">${escapeHtml(e.baseUrl || '—')}</td>
+      <td>${formatRemarksCell(e.remarks)}</td>
+      <td>${status}</td>
+      <td>${enabled}</td>
+      <td class="pa-actions">
+        <button class="pa-btn pa-btn-sm" data-edit-engine="${escapeHtml(e.slug)}">编辑</button>
+      </td>
+    </tr>`;
+  }).join('');
+  return `
+    <p class="pa-muted">通用<strong>采集引擎</strong>凭证（Firecrawl 等）。API Key 保存在数据库；具体抓取 URL 与解析逻辑写在 ingest 插件代码中。披露类数据源在「数据源配置」中引用此处引擎。</p>
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>引擎</th><th>类型</th><th>Base URL</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
+    </tr></thead><tbody>${rows || '<tr><td colspan="7" class="pa-muted">暂无引擎</td></tr>'}</tbody></table></div>`;
 }
 
 function renderAiModelsPanel(): string {
@@ -1026,7 +1132,7 @@ function presetsSectionHint(): string {
 }
 
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>（PostgreSQL），由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。股票资讯 + 财报均成功后，若 <code>PLATFORM_KG_DAG_ENABLED</code> 未关闭，将自动入队 <code>knowledge-graph-build</code>。</p>`;
+  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。股票资讯 + 财报均成功后，若 <code>PLATFORM_KG_DAG_ENABLED</code> 未关闭，将自动入队 <code>knowledge-graph-build</code>。</p>`;
 }
 
 function kgDagReasonLabel(reason: string): string {
@@ -1071,7 +1177,7 @@ function renderJobCheckpointsTable(): string {
     return '<p class="pa-muted">暂无 checkpoint（任务首次成功后写入）。</p>';
   }
   const rows = jobCheckpoints.map((row) => {
-    const statsJson = row.checkpoint.stats && Object.keys(row.checkpoint.stats).length
+    const stats = row.checkpoint.stats && Object.keys(row.checkpoint.stats).length
       ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(JSON.stringify(row.checkpoint.stats).slice(0, 80))}</span>`
       : '';
     return `
@@ -1079,7 +1185,7 @@ function renderJobCheckpointsTable(): string {
       <td class="pa-mono-sm">${escapeHtml(row.handlerKey)}</td>
       <td class="pa-muted">${formatJobTime(row.checkpoint.completedAt ?? null)}</td>
       <td class="pa-mono-sm pa-muted">${row.checkpoint.runId ? `${escapeHtml(row.checkpoint.runId.slice(0, 8))}…` : '—'}</td>
-      <td class="pa-muted">${formatJobTime(row.updatedAt)}${statsJson}</td>
+      <td class="pa-muted">${formatJobTime(row.updatedAt)}${stats}</td>
     </tr>`;
   }).join('');
   return `
@@ -1261,6 +1367,8 @@ function sectionContent(): string {
       return renderSettingsPanel();
     case 'integrations':
       return `<div class="pa-toolbar"><button class="pa-btn pa-btn-primary" id="newIntegrationBtn">新增数据源</button></div>${renderIntegrationsPanel()}`;
+    case 'engines':
+      return renderEnginesPanel();
     case 'ai-models':
       return renderAiModelsPanel();
     default:
@@ -1516,6 +1624,11 @@ function bindSectionEvents(): void {
   app.querySelectorAll('[data-edit-integration]').forEach((el) => {
     el.addEventListener('click', () => {
       openEditIntegrationModal((el as HTMLElement).dataset.editIntegration!);
+    });
+  });
+  app.querySelectorAll('[data-edit-engine]').forEach((el) => {
+    el.addEventListener('click', () => {
+      openEditEngineModal((el as HTMLElement).dataset.editEngine!);
     });
   });
   app.querySelectorAll('[data-edit-ai-model]').forEach((el) => {
@@ -1842,6 +1955,7 @@ function openCreateIntegrationModal(): void {
     <div class="pa-field"><label>API Key</label>
       <input id="int_new_api_key" type="password" autocomplete="new-password" placeholder="可选" /></div>
     ${integrationRemarksFieldHtml('', 'int_new_remarks')}
+    <div id="int_new_crawl_wrap" hidden>${crawlEngineFieldHtml(null)}</div>
     <div class="pa-field pa-field-checkbox">
       <label class="pa-checkbox-label">
         <input type="checkbox" id="int_new_enabled" checked /> 启用
@@ -1849,6 +1963,7 @@ function openCreateIntegrationModal(): void {
     </div>
     <p class="pa-muted">自定义数据源仅保存凭证；业务代码需另行接入该 slug。内置数据源由系统自动 seed，无需重复添加。</p>`), (root) => {
     bindIntegrationCategoryToggle(root, 'int_new_category', 'int_new_category_custom_wrap');
+    bindDisclosureCrawlEngineToggle(root, 'int_new_category', 'int_new_crawl_wrap');
     bindModalActions(root, () => {
       const slug = (root.querySelector('#int_new_slug') as HTMLInputElement).value.trim().toLowerCase();
       const displayName = (root.querySelector('#int_new_name') as HTMLInputElement).value.trim();
@@ -1863,6 +1978,7 @@ function openCreateIntegrationModal(): void {
       const apiKey = (root.querySelector('#int_new_api_key') as HTMLInputElement).value;
       const remarks = (root.querySelector('#int_new_remarks') as HTMLTextAreaElement).value;
       const enabled = (root.querySelector('#int_new_enabled') as HTMLInputElement).checked;
+      const ingestEngineSlug = category === 'disclosure' ? readCrawlEngineSlug(root) : null;
 
       void createIntegrationProvider({
         slug,
@@ -1872,6 +1988,7 @@ function openCreateIntegrationModal(): void {
         ...(apiKey.trim() ? { apiKey: apiKey.trim() } : {}),
         remarks,
         enabled,
+        ...(category === 'disclosure' ? { ingestEngineSlug } : {}),
       })
         .then(() => {
           closeModalFromRoot(root);
@@ -1897,9 +2014,12 @@ function openEditIntegrationModal(slug: string): void {
   if (!provider) return;
 
   const isHxxbot = slug === 'hxxbot';
+  const isDisclosure = provider.category === 'disclosure';
   const hxxbotNote = isHxxbot
     ? '<p class="pa-muted">HXXBOT 用于订阅邮件（<code>builtin.email_send</code>）、翻译、QA。Base URL 示例：<code>https://www.hxxbot.com/api</code>（与 hxxnote 桌面版 AI邮件 一致）。凭证保存在数据库。</p>'
-    : '<p class="pa-muted">具体 API 路径在代码中写死；此处只配根 URL 与密钥。</p>';
+    : isDisclosure
+      ? '<p class="pa-muted">披露类数据源：Base URL 为站点根地址；抓取凭证由下方「采集引擎」引用，具体 API 路径在 executor 代码中写死。</p>'
+      : '<p class="pa-muted">具体 API 路径在代码中写死；此处只配根 URL 与密钥。</p>';
   const testResult = isHxxbot
     ? '<div id="int_test_result" class="pa-test-result" hidden></div>'
     : '';
@@ -1928,6 +2048,9 @@ function openEditIntegrationModal(slug: string): void {
       <input readonly value="${escapeHtml(provider.slug)}" /></div>
     ${nameField}
     ${categoryField}
+    ${isDisclosure ? crawlEngineFieldHtml(provider.ingestEngineSlug) : ''}
+    ${isDisclosure && provider.ingestPluginKey ? `<div class="pa-field"><label>采集插件</label>
+      <input readonly value="${escapeHtml(provider.ingestPluginDisplayName ?? provider.ingestPluginKey)}" /></div>` : ''}
     <div class="pa-field"><label>Base URL</label>
       <input id="int_base_url" type="text" inputmode="url" spellcheck="false" autocomplete="off"
         placeholder="https://api.example.com"
@@ -1978,6 +2101,9 @@ function openEditIntegrationModal(slug: string): void {
         ...(apiKey ? { apiKey } : {}),
         enabled,
         ...(clearApiKey ? { clearApiKey: true } : {}),
+        ...(provider.category === 'disclosure' || categoryPatch === 'disclosure'
+          ? { ingestEngineSlug: readCrawlEngineSlug(root) }
+          : {}),
       })
         .then((updated) => {
           const idx = integrationProviders.findIndex((p) => p.slug === slug);
@@ -2003,6 +2129,68 @@ function openEditIntegrationModal(slug: string): void {
           .catch((e) => setIntegrationTestResult(root, 'err', String(e)));
       },
     } : undefined);
+  });
+}
+
+function openEditEngineModal(slug: string): void {
+  const engine = engines.find((e) => e.slug === slug);
+  if (!engine) return;
+
+  const typeLabel = ENGINE_TYPE_LABELS[engine.engineType] ?? engine.engineType;
+  const nameField = engine.custom
+    ? `<div class="pa-field"><label>显示名称</label>
+      <input id="eng_display_name" value="${escapeHtml(engine.displayName)}" /></div>`
+    : `<div class="pa-field"><label>显示名称</label>
+      <input id="eng_display_name" value="${escapeHtml(engine.displayName)}" />
+      <p class="pa-muted">仅影响后台展示；内置 slug 不变。</p></div>`;
+
+  openModal(modalShell(`采集引擎 — ${escapeHtml(engine.displayName)}`, `
+    <div class="pa-field"><label>标识</label>
+      <input readonly value="${escapeHtml(engine.slug)}" /></div>
+    ${nameField}
+    <div class="pa-field"><label>类型</label>
+      <input readonly value="${escapeHtml(typeLabel)}" /></div>
+    <div class="pa-field"><label>Base URL</label>
+      <input id="eng_base_url" type="text" inputmode="url" spellcheck="false" autocomplete="off"
+        value="${escapeHtml(engine.baseUrl)}" /></div>
+    <div class="pa-field"><label>API Key</label>
+      <input id="eng_api_key" type="password" autocomplete="new-password"
+        placeholder="${engine.hasApiKey ? '留空则保留已存 Key' : '输入 API Key'}" />
+      ${engine.apiKeyHint ? `<p class="pa-muted">当前：${escapeHtml(engine.apiKeyHint)}</p>` : ''}
+      <label class="pa-checkbox-label pa-checkbox-label-spaced">
+        <input type="checkbox" id="eng_clear_key" /> 清除已保存的 Key
+      </label>
+    </div>
+    <div class="pa-field pa-field-checkbox">
+      <label class="pa-checkbox-label">
+        <input type="checkbox" id="eng_enabled" ${engine.enabled ? 'checked' : ''} /> 启用
+      </label>
+    </div>
+    ${integrationRemarksFieldHtml(engine.remarks ?? '', 'eng_remarks')}
+    <p class="pa-muted">引擎凭证保存在数据库；业务数据源在「数据源配置」中引用此引擎。</p>`, modalActions()), (root) => {
+    bindModalActions(root, () => {
+      const displayName = (root.querySelector('#eng_display_name') as HTMLInputElement).value.trim();
+      const baseUrl = (root.querySelector('#eng_base_url') as HTMLInputElement).value.trim();
+      const apiKey = (root.querySelector('#eng_api_key') as HTMLInputElement).value;
+      const remarks = (root.querySelector('#eng_remarks') as HTMLTextAreaElement).value;
+      const clearApiKey = (root.querySelector('#eng_clear_key') as HTMLInputElement).checked;
+      const enabled = (root.querySelector('#eng_enabled') as HTMLInputElement).checked;
+
+      void saveEngine(slug, {
+        displayName,
+        baseUrl,
+        remarks,
+        ...(apiKey ? { apiKey } : {}),
+        enabled,
+        ...(clearApiKey ? { clearApiKey: true } : {}),
+      })
+        .then(() => {
+          closeModalFromRoot(root);
+          return reloadSection();
+        })
+        .then(() => showToast('采集引擎已保存'))
+        .catch((e) => showToast(String(e), true));
+    });
   });
 }
 
