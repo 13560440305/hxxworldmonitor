@@ -269,6 +269,7 @@
   "panels": {
     "liveNews": "Live News",
     "markets": "Markets",
+    "stocks": "Stocks",
     "map": "Global Situation",
     "techMap": "Global Tech",
     "techHubs": "Hot Tech Hubs",
@@ -2364,6 +2365,17 @@
       "recovering": "Recovering",
       "stabilized": "Stabilized"
     },
+    "enterpriseGraph": {
+      "selectHint": "Select a stock in the right panel to view its supply-chain graph",
+      "empty": "Select a company to begin",
+      "loading": "Loading graph for {{symbol}}…",
+      "status": "{{name}} · {{count}} nodes · source {{source}}",
+      "market": "Market",
+      "relations": "Relations",
+      "sourceNote": "Served by Platform API; per-market ingest runs in platform:executor.",
+      "noStocksForRegion": "No stocks for this region",
+      "loadFailed": "Failed to load enterprise graph"
+    },
     "worldClock": {
       "selectCities": "Select cities",
       "done": "Done",
@@ -2395,6 +2407,7 @@
     "viewTimeline": "Timeline",
     "viewHeatmap": "Heatmap",
     "viewCountryIntel": "Country Intel",
+    "viewEnterpriseGraph": "Enterprise Graph",
     "contextPanel": "Live Context",
     "contextSubtitle": "Real-time data stream",
     "sidebarLabel": "Navigation",

@@ -92,6 +92,7 @@ import { mountCommunityWidget } from '@/components/CommunityWidget';
 import { ResearchServiceClient } from '@/generated/client/worldmonitor/research/v1/service_client';
 import {
   MarketPanel,
+  StocksPanel,
   HeatmapPanel,
   CommoditiesPanel,
   CryptoPanel,
@@ -1021,12 +1022,17 @@ export class DataLoaderManager implements AppModule {
       const stocksResult = await fetchMultipleStocks(MARKET_SYMBOLS, {
         onBatch: (partialStocks) => {
           this.ctx.latestMarkets = partialStocks;
+          (this.ctx.panels['stocks'] as StocksPanel | undefined)?.renderStocks(partialStocks);
           (this.ctx.panels['markets'] as MarketPanel).renderMarkets(partialStocks);
         },
       });
 
       const finnhubConfigMsg = 'FINNHUB_API_KEY not configured — add in Settings';
       this.ctx.latestMarkets = stocksResult.data;
+      (this.ctx.panels['stocks'] as StocksPanel | undefined)?.renderStocks(
+        stocksResult.data,
+        stocksResult.rateLimited,
+      );
       (this.ctx.panels['markets'] as MarketPanel).renderMarkets(stocksResult.data, stocksResult.rateLimited);
 
       if (stocksResult.rateLimited && stocksResult.data.length === 0) {
@@ -1036,6 +1042,7 @@ export class DataLoaderManager implements AppModule {
       } else if (stocksResult.skipped) {
         this.ctx.statusPanel?.updateApi('Finnhub', { status: 'error' });
         if (stocksResult.data.length === 0) {
+          this.ctx.panels['stocks']?.showConfigError(finnhubConfigMsg);
           this.ctx.panels['markets']?.showConfigError(finnhubConfigMsg);
         }
         this.ctx.panels['heatmap']?.showConfigError(finnhubConfigMsg);

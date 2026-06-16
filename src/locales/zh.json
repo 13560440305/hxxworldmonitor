@@ -269,6 +269,7 @@
   "panels": {
     "liveNews": "实时新闻",
     "markets": "市场",
+    "stocks": "股票",
     "map": "全球态势",
     "techMap": "全球科技",
     "techHubs": "热门科技中心",
@@ -2364,6 +2365,17 @@
       "recovering": "恢复中",
       "stabilized": "已稳定"
     },
+    "enterpriseGraph": {
+      "selectHint": "在右侧选择股票以查看产业链图谱",
+      "empty": "请选择一家企业",
+      "loading": "正在加载 {{symbol}} 图谱…",
+      "status": "{{name}} · {{count}} 节点 · 来源 {{source}}",
+      "market": "市场",
+      "relations": "关系数",
+      "sourceNote": "数据由 Platform API 提供；各市场采集任务在 platform:executor 中按源实现。",
+      "noStocksForRegion": "当前区域暂无股票数据",
+      "loadFailed": "无法加载企业图谱"
+    },
     "worldClock": {
       "selectCities": "选择城市",
       "done": "完成",
@@ -2395,6 +2407,7 @@
     "viewTimeline": "时间线",
     "viewHeatmap": "热力图",
     "viewCountryIntel": "国家情报",
+    "viewEnterpriseGraph": "企业图谱",
     "contextPanel": "实时上下文",
     "contextSubtitle": "实时数据流",
     "sidebarLabel": "导航",

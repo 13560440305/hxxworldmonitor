@@ -40,6 +40,127 @@ export class MarketPanel extends Panel {
   }
 }
 
+export class StocksPanel extends Panel {
+  private market: 'us' | 'hk' | 'eu' | 'cn' = 'us';
+  private selectable = false;
+  private allowedSymbols: Set<string> | null = null;
+  private onCompanySelect: ((symbol: string, market: string) => void) | null = null;
+  private lastData: MarketData[] = [];
+  private lastRateLimited: boolean | undefined;
+
+  constructor() {
+    super({ id: 'stocks', title: t('panels.stocks') });
+  }
+
+  setRegionFilter(region: string, market?: 'us' | 'hk' | 'eu' | 'cn'): void {
+    if (market) this.market = market;
+    else this.market = region === 'asia' ? 'cn' : region === 'eu' ? 'eu' : 'us';
+    this.rerenderIfReady();
+  }
+
+  setAllowedSymbols(symbols: Set<string> | null): void {
+    this.allowedSymbols = symbols;
+    this.rerenderIfReady();
+  }
+
+  setSelectableMode(enabled: boolean): void {
+    this.selectable = enabled;
+    this.rerenderIfReady();
+  }
+
+  setOnCompanySelect(handler: ((symbol: string, market: string) => void) | null): void {
+    this.onCompanySelect = handler;
+  }
+
+  getActiveMarket(): string {
+    return this.market;
+  }
+
+  public renderStocks(data: MarketData[], rateLimited?: boolean): void {
+    this.lastData = data;
+    this.lastRateLimited = rateLimited;
+    this.paintStocks();
+  }
+
+  /** Render catalog/API companies (quotes merged when available in lastData). */
+  public renderCompanyList(
+    companies: Array<{ symbol: string; name: string; display: string; market: string }>,
+  ): void {
+    const quoteBySymbol = new Map(this.lastData.map((row) => [row.symbol.toUpperCase(), row]));
+    const rows: MarketData[] = companies.map((c) => {
+      const quote = quoteBySymbol.get(c.symbol.toUpperCase());
+      return quote ?? {
+        symbol: c.symbol,
+        name: c.name,
+        display: c.display,
+        price: null,
+        change: null,
+      };
+    });
+    this.paintRows(rows);
+  }
+
+  private rerenderIfReady(): void {
+    if (this.lastData.length > 0 || this.allowedSymbols) {
+      this.paintStocks();
+    }
+  }
+
+  private paintStocks(): void {
+    this.paintRows(this.filterRows(this.lastData));
+  }
+
+  private paintRows(rows: MarketData[]): void {
+    if (rows.length === 0) {
+      this.showError(
+        this.lastRateLimited
+          ? t('common.rateLimitedMarket')
+          : t('components.enterpriseGraph.noStocksForRegion'),
+      );
+      return;
+    }
+
+    const html = rows
+      .map(
+        (stock) => `
+      <div class="market-item${this.selectable ? ' market-item-selectable' : ''}" data-symbol="${escapeHtml(stock.symbol)}" data-market="${escapeHtml(this.market)}">
+        <div class="market-info">
+          <span class="market-name">${escapeHtml(stock.name)}</span>
+          <span class="market-symbol">${escapeHtml(stock.display)}</span>
+        </div>
+        <div class="market-data">
+          ${stock.price != null ? miniSparkline(stock.sparkline, stock.change) : ''}
+          <span class="market-price">${stock.price != null ? formatPrice(stock.price) : '—'}</span>
+          <span class="market-change ${stock.change != null ? getChangeClass(stock.change) : ''}">${stock.change != null ? formatChange(stock.change) : ''}</span>
+        </div>
+      </div>
+    `,
+      )
+      .join('');
+
+    this.setContent(html);
+
+    if (this.selectable) {
+      this.getElement().querySelectorAll<HTMLElement>('.market-item-selectable').forEach((el) => {
+        el.addEventListener('click', () => {
+          const symbol = el.dataset.symbol;
+          const market = el.dataset.market ?? this.market;
+          if (symbol && this.onCompanySelect) {
+            this.onCompanySelect(symbol, market);
+          }
+        });
+      });
+    }
+  }
+
+  private filterRows(data: MarketData[]): MarketData[] {
+    if (this.allowedSymbols && this.allowedSymbols.size > 0) {
+      return data.filter((row) => this.allowedSymbols!.has(row.symbol.toUpperCase()));
+    }
+    return data;
+  }
+}
+
 export class HeatmapPanel extends Panel {
   constructor() {
     super({ id: 'heatmap', title: t('panels.heatmap') });

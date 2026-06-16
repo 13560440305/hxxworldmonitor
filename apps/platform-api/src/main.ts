@@ -45,6 +45,7 @@ import { runSubscriptionMatchPass } from '@hxxworldmonitor/platform-core/subscri
 import { handlePlatformAdminRoutes } from '@hxxworldmonitor/platform-core/admin-api.js';
 import { handleUserAuthRoutes } from '@hxxworldmonitor/platform-core/user-auth-api.js';
 import { handleOpenApiRoutes } from '@hxxworldmonitor/platform-core/open-api-routes.js';
+import { handleEnterpriseGraphRoutes } from '@hxxworldmonitor/platform-core/enterprise-graph/routes.js';
 import {
   createUser,
   getUserByEmail,
@@ -760,6 +761,10 @@ async function handleRequest(req: IncomingMessage, res: ServerResponse): Promise
         days: body.days,
       });
       json(res, 200, result);
+      return;
+    }
+
+    if (await handleEnterpriseGraphRoutes(req, res, path, url, json)) {
       return;
     }
 

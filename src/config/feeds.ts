@@ -879,6 +879,12 @@ const TECH_FEEDS: Record<string, Feed[]> = {
     { name: 'Yahoo Finance', url: rss('https://finance.yahoo.com/rss/topstories') },
     { name: 'Seeking Alpha Tech', url: rss('https://seekingalpha.com/market_currents.xml') },
   ],
+  'stocks-news': [
+    { name: 'CNBC Tech Stocks', url: rss('https://www.cnbc.com/id/19854910/device/rss/rss.html') },
+    { name: 'Tech Equities', url: rss('https://news.google.com/rss/search?q=("tech+stocks"+OR+"NASDAQ"+OR+"mega+cap+tech")+when:2d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'Semiconductor Stocks', url: rss('https://news.google.com/rss/search?q=(semiconductor+OR+"chip+stocks"+OR+NVDA+OR+AMD)+when:2d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'AI Stocks', url: rss('https://news.google.com/rss/search?q=("AI+stocks"+OR+"artificial+intelligence"+equities)+when:3d&hl=en-US&gl=US&ceid=US:en') },
+  ],
   hardware: [
     { name: "Tom's Hardware", url: rss('https://www.tomshardware.com/feeds/all') },
     { name: 'SemiAnalysis', url: rss('https://news.google.com/rss/search?q=site:semianalysis.com+when:7d&hl=en-US&gl=US&ceid=US:en') },
@@ -937,13 +943,20 @@ const TECH_FEEDS: Record<string, Feed[]> = {
 const FINANCE_FEEDS: Record<string, Feed[]> = {
   markets: [
     { name: 'CNBC', url: rss('https://www.cnbc.com/id/100003114/device/rss/rss.html') },
-    // Direct MarketWatch RSS returns frequent 403s from cloud IPs; use Google News fallback.
     { name: 'MarketWatch', url: rss('https://news.google.com/rss/search?q=site:marketwatch.com+markets+when:1d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Yahoo Finance', url: rss('https://finance.yahoo.com/rss/topstories') },
     { name: 'Seeking Alpha', url: rss('https://seekingalpha.com/market_currents.xml') },
     { name: 'Reuters Markets', url: rss('https://news.google.com/rss/search?q=site:reuters.com+markets+stocks+when:1d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Bloomberg Markets', url: rss('https://news.google.com/rss/search?q=site:bloomberg.com+markets+when:1d&hl=en-US&gl=US&ceid=US:en') },
     { name: 'Investing.com News', url: rss('https://news.google.com/rss/search?q=site:investing.com+markets+when:1d&hl=en-US&gl=US&ceid=US:en') },
+  ],
+  'stocks-news': [
+    { name: 'CNBC Stocks', url: rss('https://www.cnbc.com/id/100003114/device/rss/rss.html') },
+    { name: 'Yahoo Finance Stocks', url: rss('https://finance.yahoo.com/rss/topstories') },
+    { name: 'Reuters Equities', url: rss('https://news.google.com/rss/search?q=site:reuters.com+(stocks+OR+equities+OR+"stock+market")+when:1d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'Bloomberg Stocks', url: rss('https://news.google.com/rss/search?q=site:bloomberg.com+(stocks+OR+equities)+when:1d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'MarketWatch Stocks', url: rss('https://news.google.com/rss/search?q=site:marketwatch.com+(stocks+OR+equities)+when:1d&hl=en-US&gl=US&ceid=US:en') },
+    { name: 'Earnings & IPO', url: rss('https://news.google.com/rss/search?q=(earnings+OR+IPO+OR+"stock+buyback")+when:2d&hl=en-US&gl=US&ceid=US:en') },
   ],
   forex: [
     { name: 'Forex News', url: rss('https://news.google.com/rss/search?q=("forex"+OR+"currency"+OR+"FX+market")+trading+when:1d&hl=en-US&gl=US&ceid=US:en') },

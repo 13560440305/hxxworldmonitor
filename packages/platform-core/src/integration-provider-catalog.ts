@@ -9,7 +9,11 @@ export type IntegrationProviderCategory =
   | 'military'
   | 'aviation'
   | 'cyber'
-  | 'relay';
+  | 'relay'
+  /** Crawl/scrape engines (Firecrawl, future Playwright services). Credentials only — paths in executor code. */
+  | 'crawl'
+  /** Listed-company disclosure portals by region (CNINFO, future EDGAR crawl, etc.). */
+  | 'disclosure';
 
 export interface IntegrationProviderDefinition {
   slug: string;
@@ -202,6 +206,25 @@ export const INTEGRATION_PROVIDER_CATALOG: IntegrationProviderDefinition[] = [
     envBaseUrl: 'WS_RELAY_URL',
     envApiKey: 'RELAY_SHARED_SECRET',
     defaultRemarks: '自托管 WebSocket 中继（本地 Docker 或 Railway）。AIS、OpenSky、RSS、Telegram 等聚合转发，非单一商业 API。',
+  },
+  {
+    slug: 'firecrawl',
+    displayName: 'Firecrawl',
+    category: 'crawl',
+    defaultBaseUrl: 'https://api.firecrawl.dev',
+    sortOrder: 190,
+    envApiKey: 'FIRECRAWL_API_KEY',
+    envBaseUrl: 'FIRECRAWL_API_URL',
+    defaultRemarks: '网页采集引擎（Firecrawl）。供 platform:executor 披露/图谱流水线调用；具体抓取 URL 与解析逻辑写在代码中，不在此配置。',
+  },
+  {
+    slug: 'cninfo',
+    displayName: '巨潮资讯网',
+    category: 'disclosure',
+    defaultBaseUrl: 'https://www.cninfo.com.cn',
+    sortOrder: 200,
+    apiKeyOptional: true,
+    defaultRemarks: '深交所法定披露平台 · A股/北交所上市公司公告、财报等。不使用官方数据 API（成本过高）；由 executor 经 Firecrawl 抓取，接口地址硬编码在 disclosure-ingest-cn handler。',
   },
 ];
 

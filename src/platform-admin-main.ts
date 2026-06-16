@@ -622,6 +622,8 @@ const INTEGRATION_CATEGORY_LABELS: Record<string, string> = {
   aviation: '航空',
   cyber: '威胁情报',
   relay: 'Relay 中继',
+  crawl: '采集引擎',
+  disclosure: '上市公司披露',
   custom: '自定义',
 };
 
@@ -634,10 +636,12 @@ const INTEGRATION_CATEGORY_HINTS: Record<string, string> = {
   aviation: '民航航班与 ICAO 航空数据',
   cyber: '恶意 URL、IP 信誉、威胁情报',
   relay: '自托管 AIS/RSS/Telegram 等 WebSocket 中继',
+  crawl: 'Firecrawl 等网页采集引擎（API Key）；具体抓取 URL 写在 executor 代码中',
+  disclosure: '巨潮资讯网等法定披露站点（通常无需 API Key）；公告/财报由 executor 多阶段抓取解析',
 };
 
 const PRESET_INTEGRATION_CATEGORIES = [
-  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay',
+  'platform', 'market', 'energy', 'geo', 'military', 'aviation', 'cyber', 'relay', 'crawl', 'disclosure',
 ] as const;
 
 const CUSTOM_CATEGORY_VALUE = '__custom__';
@@ -844,7 +848,7 @@ function renderIntegrationsPanel(): string {
     </tr>`;
   }).join('');
   return `
-    <p class="pa-muted">外部数据 API 按<strong>分组</strong>排列（HXXBOT → 市场/宏观 → 能源 → …）。每项只需配置 <strong>Base URL</strong> + <strong>API Key</strong>；「备注」列说明数据来源与机构，可编辑。AI 摘要请至「AI 模型」。</p>
+    <p class="pa-muted">外部数据源按<strong>分组</strong>排列。常规 REST API 配置 <strong>Base URL + API Key</strong>；<strong>采集引擎</strong>（如 Firecrawl）与<strong>上市公司披露</strong>（如巨潮资讯网）用于 executor 多阶段抓取流水线，具体请求地址写在代码中。AI 摘要请至「AI 模型」。</p>
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
       <th class="pa-col-index">序号</th><th>数据源</th><th>分组</th><th>Base URL</th><th>备注</th><th>密钥</th><th>状态</th><th>操作</th>
     </tr></thead><tbody>${rows || '<tr><td colspan="8" class="pa-muted">暂无数据源</td></tr>'}</tbody></table></div>

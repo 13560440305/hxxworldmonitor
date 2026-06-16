@@ -167,7 +167,9 @@ const CATEGORY_SORT_SQL = `
     WHEN 'aviation' THEN 6
     WHEN 'cyber' THEN 7
     WHEN 'relay' THEN 8
-    WHEN 'ai' THEN 9
+    WHEN 'crawl' THEN 9
+    WHEN 'disclosure' THEN 10
+    WHEN 'ai' THEN 11
     ELSE 99
   END`;
 

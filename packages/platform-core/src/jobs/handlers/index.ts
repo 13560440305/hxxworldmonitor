@@ -3,6 +3,12 @@ import {
   runKnowledgeGraphBuild,
   runStockNewsIngest,
 } from '../../equity-ingest.js';
+import {
+  runEuEquityGraphIngest,
+  runHkEquityGraphIngest,
+  runUsEquityGraphIngest,
+  runCnDisclosureIngest,
+} from '../../enterprise-graph/sources/index.js';
 import { runColdTierPass } from '../../cold-tier-worker.js';
 import { runAllVariantIngest, runFastVariantIngest, runRssIngest, runRssIngestFast } from '../../rss-ingest.js';
 import { runEmbeddingBatch } from '../../research-service.js';
@@ -130,6 +136,44 @@ const knowledgeGraphHandler: JobHandler = {
   },
 };
 
+/** Per-market graph ingest stubs — implement data sources in platform:executor. */
+const enterpriseGraphIngestUsHandler: JobHandler = {
+  key: 'enterprise-graph-ingest-us',
+  tier: 'heavy',
+  async run(ctx: JobContext) {
+    const result = await runUsEquityGraphIngest(ctx);
+    return { stats: { ...result } };
+  },
+};
+
+const enterpriseGraphIngestHkHandler: JobHandler = {
+  key: 'enterprise-graph-ingest-hk',
+  tier: 'heavy',
+  async run(ctx: JobContext) {
+    const result = await runHkEquityGraphIngest(ctx);
+    return { stats: { ...result } };
+  },
+};
+
+const enterpriseGraphIngestEuHandler: JobHandler = {
+  key: 'enterprise-graph-ingest-eu',
+  tier: 'heavy',
+  async run(ctx: JobContext) {
+    const result = await runEuEquityGraphIngest(ctx);
+    return { stats: { ...result } };
+  },
+};
+
+/** CN A-share disclosures — Firecrawl + CNINFO (no official data API). */
+const disclosureIngestCnHandler: JobHandler = {
+  key: 'disclosure-ingest-cn',
+  tier: 'heavy',
+  async run(ctx: JobContext) {
+    const result = await runCnDisclosureIngest(ctx);
+    return { stats: { ...result } };
+  },
+};
+
 const HANDLERS: JobHandler[] = [
   subscriptionHandler,
   coldTierHandler,
@@ -139,6 +183,10 @@ const HANDLERS: JobHandler[] = [
   stockNewsHandler,
   earningsHandler,
   knowledgeGraphHandler,
+  enterpriseGraphIngestUsHandler,
+  enterpriseGraphIngestHkHandler,
+  enterpriseGraphIngestEuHandler,
+  disclosureIngestCnHandler,
 ];
 
 const byKey = new Map(HANDLERS.map((h) => [h.key, h]));

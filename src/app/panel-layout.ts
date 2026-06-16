@@ -5,6 +5,7 @@ import {
   MapContainer,
   NewsPanel,
   MarketPanel,
+  StocksPanel,
   HeatmapPanel,
   CommoditiesPanel,
   CryptoPanel,
@@ -50,8 +51,15 @@ import { SpeciesComebackPanel } from '@/components/SpeciesComebackPanel';
 import { RenewableEnergyPanel } from '@/components/RenewableEnergyPanel';
 import { GivingPanel } from '@/components';
 import { SidebarNav } from '@/components/SidebarNav';
+import { EnterpriseGraphView } from '@/components/EnterpriseGraphView';
 import { focusInvestmentOnMap } from '@/services/investments-focus';
 import { getViewTabPanel } from '@/config/layout-nav';
+import { filterSymbolsForRegion, listCatalogCompaniesForRegion, resolveStockMarket } from '@/config/stock-catalog';
+import {
+  fetchEnterpriseGraph,
+  fetchEnterpriseGraphCompanies,
+  resolveMarketForRegion,
+} from '@/services/enterprise-graph';
 import { debounce, saveToStorage } from '@/utils';
 import { escapeHtml } from '@/utils/sanitize';
 import {
@@ -80,6 +88,10 @@ export class PanelLayoutManager implements AppModule {
   private criticalBannerEl: HTMLElement | null = null;
   private sidebarNav: SidebarNav | null = null;
   private activeContextPanel: string | null = null;
+  private activeViewTab = 'globe';
+  private enterpriseGraphView: EnterpriseGraphView | null = null;
+  private selectedCompanySymbol: string | null = null;
+  private selectedCompanyMarket: string | null = null;
   private readonly applyTimeRangeFilterDebounced: () => void;
 
   constructor(ctx: AppContext, callbacks: PanelLayoutCallbacks) {
@@ -114,6 +126,8 @@ export class PanelLayoutManager implements AppModule {
     this.ctx.speciesPanel?.destroy();
     this.ctx.renewablePanel?.destroy();
     this.sidebarNav = null;
+    this.enterpriseGraphView?.destroy();
+    this.enterpriseGraphView = null;
   }
 
   /** Show a single panel in the right context column. */
@@ -127,6 +141,7 @@ export class PanelLayoutManager implements AppModule {
     });
     this.sidebarNav?.setActivePanel(panelKey);
     this.updateContextHeader(panelKey);
+    this.syncStocksSelectableMode();
     try {
       localStorage.setItem('wm-active-context-panel', panelKey);
     } catch { /* ignore */ }
@@ -147,14 +162,127 @@ export class PanelLayoutManager implements AppModule {
   private setupViewTabs(): void {
     document.querySelectorAll<HTMLButtonElement>('.wm-variant-tab').forEach((tab) => {
       tab.addEventListener('click', () => {
-        document.querySelectorAll('.wm-variant-tab').forEach((t) => t.classList.remove('active'));
-        tab.classList.add('active');
         const view = tab.dataset.view;
-        if (view) {
-          const panelKey = getViewTabPanel(view);
-          this.activateContextPanel(panelKey);
-        }
+        if (view) this.setActiveViewTab(view);
       });
+    });
+  }
+
+  private setActiveViewTab(view: string): void {
+    this.activeViewTab = view;
+    document.querySelectorAll('.wm-variant-tab').forEach((tab) => {
+      tab.classList.toggle('active', (tab as HTMLElement).dataset.view === view);
+    });
+
+    const isGraph = view === 'enterprise-graph';
+    document.getElementById('mapSection')?.classList.toggle('view-hidden', isGraph);
+    document.getElementById('enterpriseGraphMount')?.classList.toggle('active', isGraph);
+
+    const panelKey = getViewTabPanel(view);
+    this.activateContextPanel(panelKey);
+
+    if (isGraph) {
+      void this.refreshEnterpriseGraphRegion();
+      if (this.selectedCompanySymbol) {
+        void this.loadEnterpriseGraph(this.selectedCompanySymbol, this.selectedCompanyMarket ?? undefined);
+      } else {
+        this.enterpriseGraphView?.showPlaceholder();
+      }
+    }
+  }
+
+  private syncStocksSelectableMode(): void {
+    const stocksPanel = this.ctx.panels['stocks'] as StocksPanel | undefined;
+    const selectable = this.activeViewTab === 'enterprise-graph' && this.activeContextPanel === 'stocks';
+    stocksPanel?.setSelectableMode(selectable);
+  }
+
+  private setupEnterpriseGraph(): void {
+    const mount = document.getElementById('enterpriseGraphMount');
+    if (!mount) return;
+
+    this.enterpriseGraphView = new EnterpriseGraphView(mount);
+    this.enterpriseGraphView.setOnSelectCompany((symbol, market) => {
+      void this.loadEnterpriseGraph(symbol, market);
+    });
+
+    const stocksPanel = this.ctx.panels['stocks'] as StocksPanel | undefined;
+    stocksPanel?.setOnCompanySelect((symbol, market) => {
+      if (this.activeViewTab !== 'enterprise-graph') {
+        this.setActiveViewTab('enterprise-graph');
+      }
+      void this.loadEnterpriseGraph(symbol, market);
+    });
+  }
+
+  private getCurrentRegion(): string {
+    const regionSelect = document.getElementById('regionSelect') as HTMLSelectElement | null;
+    return regionSelect?.value ?? 'global';
+  }
+
+  async refreshEnterpriseGraphRegion(): Promise<void> {
+    const region = this.getCurrentRegion();
+    const market = resolveMarketForRegion(region);
+    const stocksPanel = this.ctx.panels['stocks'] as StocksPanel | undefined;
+    stocksPanel?.setRegionFilter(region, market);
+
+    const apiResult = await fetchEnterpriseGraphCompanies(region, market);
+    if (apiResult?.companies?.length) {
+      stocksPanel?.renderCompanyList(apiResult.companies);
+      return;
+    }
+
+    const allowed = filterSymbolsForRegion(region, market);
+    stocksPanel?.setAllowedSymbols(allowed);
+    const catalogRows = listCatalogCompaniesForRegion(region, market);
+    if (catalogRows.length > 0) {
+      stocksPanel?.renderCompanyList(catalogRows.map((c) => ({
+        symbol: c.symbol,
+        name: c.name,
+        display: c.display,
+        market: c.market,
+      })));
+      return;
+    }
+    if (this.ctx.latestMarkets.length > 0) {
+      stocksPanel?.renderStocks(this.ctx.latestMarkets);
+    }
+  }
+
+  async loadEnterpriseGraph(symbol: string, market?: string): Promise<void> {
+    this.selectedCompanySymbol = symbol;
+    this.selectedCompanyMarket = market ?? resolveStockMarket(this.getCurrentRegion());
+    this.enterpriseGraphView?.showLoading(symbol);
+
+    const region = this.getCurrentRegion();
+    const graph = await fetchEnterpriseGraph(
+      symbol,
+      region,
+      (market ?? this.selectedCompanyMarket) as 'us' | 'hk' | 'eu' | 'cn',
+    );
+
+    if (!graph) {
+      this.enterpriseGraphView?.showError(t('components.enterpriseGraph.loadFailed'));
+      return;
+    }
+
+    this.enterpriseGraphView?.renderGraph(graph);
+    const titleEl = document.getElementById('contextPanelTitle');
+    if (titleEl) {
+      titleEl.textContent = `${t('layout.viewEnterpriseGraph')} · ${graph.center.name}`;
+    }
+  }
+
+  private setupRegionSync(): void {
+    const regionSelect = document.getElementById('regionSelect') as HTMLSelectElement | null;
+    regionSelect?.addEventListener('change', () => {
+      void this.refreshEnterpriseGraphRegion();
+      if (this.activeViewTab === 'enterprise-graph' && this.selectedCompanySymbol) {
+        void this.loadEnterpriseGraph(
+          this.selectedCompanySymbol,
+          this.selectedCompanyMarket ?? undefined,
+        );
+      }
     });
   }
 
@@ -233,6 +361,7 @@ export class PanelLayoutManager implements AppModule {
               <button type="button" class="wm-variant-tab" data-view="timeline" role="tab">${t('layout.viewTimeline')}</button>
               <button type="button" class="wm-variant-tab" data-view="heatmap" role="tab">${t('layout.viewHeatmap')}</button>
               <button type="button" class="wm-variant-tab" data-view="country-intel" role="tab">${t('layout.viewCountryIntel')}</button>
+              ${SITE_VARIANT !== 'happy' ? `<button type="button" class="wm-variant-tab" data-view="enterprise-graph" role="tab">${t('layout.viewEnterpriseGraph')}</button>` : ''}
             </div>
 
             <div class="wm-content-header">
@@ -279,6 +408,7 @@ export class PanelLayoutManager implements AppModule {
                   ${SITE_VARIANT === 'happy' ? `<button class="tv-exit-btn" id="tvExitBtn">${t('header.exitTvMode')}</button>` : ''}
                   <div class="map-resize-handle" id="mapResizeHandle"></div>
                 </div>
+                ${SITE_VARIANT !== 'happy' ? '<div class="enterprise-graph-mount" id="enterpriseGraphMount"></div>' : ''}
               </div>
 
               <aside class="wm-right-panel">
@@ -449,6 +579,9 @@ export class PanelLayoutManager implements AppModule {
 
     const marketsPanel = new MarketPanel();
     this.ctx.panels['markets'] = marketsPanel;
+
+    const stocksPanel = new StocksPanel();
+    this.ctx.panels['stocks'] = stocksPanel;
 
     const monitorPanel = new MonitorPanel(this.ctx.monitors);
     this.ctx.panels['monitors'] = monitorPanel;
@@ -814,6 +947,11 @@ export class PanelLayoutManager implements AppModule {
 
     this.setupSidebarNav();
     this.setupViewTabs();
+    if (SITE_VARIANT !== 'happy') {
+      this.setupEnterpriseGraph();
+      this.setupRegionSync();
+      void this.refreshEnterpriseGraphRegion();
+    }
     this.activateContextPanel(this.resolveInitialContextPanel());
 
     this.ctx.map.onTimeRangeChanged((range) => {
