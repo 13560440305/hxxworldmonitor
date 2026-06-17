@@ -1,6 +1,6 @@
 import { resolveIngestBinding } from '../ingest-bindings-repository.js';
 import type { JobContext } from '../jobs/types.js';
-import { getIngestPlugin } from './registry.js';
+import { getIngestPlugin, getIngestPluginByHandlerKey } from './registry.js';
 import type { IngestResult } from './types.js';
 
 export async function runIngestPlugin(
@@ -16,7 +16,19 @@ export async function runIngestPlugin(
     };
   }
 
-  const binding = await resolveIngestBinding(sourceSlug ?? plugin.sourceSlug);
+  if (!plugin.requiresBinding) {
+    return plugin.run(ctx);
+  }
+
+  const slug = sourceSlug ?? plugin.sourceSlug;
+  if (!slug) {
+    return {
+      status: 'error',
+      message: `Plugin ${pluginKey} requires sourceSlug binding`,
+    };
+  }
+
+  const binding = await resolveIngestBinding(slug);
   if (!binding.enabled) {
     return {
       status: 'stub',
@@ -36,4 +48,18 @@ export async function runIngestPlugin(
     source: binding.source,
     engine: binding.engine,
   });
+}
+
+export async function runIngestPluginForHandler(
+  handlerKey: string,
+  ctx: JobContext,
+): Promise<IngestResult> {
+  const plugin = getIngestPluginByHandlerKey(handlerKey);
+  if (!plugin) {
+    return {
+      status: 'error',
+      message: `No ingest plugin for handler: ${handlerKey}`,
+    };
+  }
+  return runIngestPlugin(plugin.key, ctx);
 }

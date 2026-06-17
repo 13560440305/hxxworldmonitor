@@ -29,7 +29,7 @@ export interface EnterpriseGraphNode {
   id: string;
   symbol: string;
   name: string;
-  entityType: 'company' | 'news_item' | 'sector';
+  entityType: 'company' | 'news_item' | 'sector' | 'filing';
   market?: EnterpriseGraphMarketId;
   props?: Record<string, unknown>;
 }
@@ -46,7 +46,7 @@ export interface EnterpriseGraphResponse {
   nodes: EnterpriseGraphNode[];
   edges: EnterpriseGraphEdge[];
   market: EnterpriseGraphMarketId;
-  source: 'kg' | 'catalog';
+  source: 'kg' | 'catalog' | 'db';
   depth: number;
 }
 

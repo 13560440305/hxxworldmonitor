@@ -34,8 +34,8 @@ export const ENTERPRISE_GRAPH_MARKETS: EnterpriseGraphMarket[] = [
     currency: 'CNY',
     regionKeys: ['global', 'asia'],
     sourceHandlerKey: 'disclosure-ingest-cn',
-    sourceLabel: 'CNINFO / Firecrawl (stub)',
-    status: 'stub',
+    sourceLabel: 'CNINFO / Firecrawl',
+    status: 'active',
   },
 ];
 

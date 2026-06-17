@@ -1,19 +1,7 @@
-import {
-  runEarningsIngest,
-  runKnowledgeGraphBuild,
-  runStockNewsIngest,
-} from '../../equity-ingest.js';
-import {
-  runEuEquityGraphIngest,
-  runHkEquityGraphIngest,
-  runUsEquityGraphIngest,
-} from '../../enterprise-graph/sources/index.js';
-import { runIngestPlugin } from '../../ingest-plugins/run-ingest-plugin.js';
-import { runColdTierPass } from '../../cold-tier-worker.js';
-import { runAllVariantIngest, runFastVariantIngest, runRssIngest, runRssIngestFast } from '../../rss-ingest.js';
-import { runEmbeddingBatch } from '../../research-service.js';
 import { deliverAllEnabledSubscriptions, runMatchPassAll } from '../../subscription-delivery-service.js';
 import { isHxxbotConfigured } from '@hxxworldmonitor/shared/hxxbot-config.js';
+import { listIngestPlugins } from '../../ingest-plugins/registry.js';
+import { runIngestPlugin } from '../../ingest-plugins/run-ingest-plugin.js';
 import type { JobContext, JobHandler } from '../types.js';
 
 const subscriptionHandler: JobHandler = {
@@ -45,148 +33,21 @@ const subscriptionHandler: JobHandler = {
   },
 };
 
-const coldTierHandler: JobHandler = {
-  key: 'cold-tier-archive',
-  tier: 'batch',
-  async run() {
-    const result = await runColdTierPass();
-    return { stats: { ...result } };
-  },
-};
-
-const rssIngestFastHandler: JobHandler = {
-  key: 'rss-ingest-fast',
-  tier: 'batch',
-  async run(ctx: JobContext) {
-    if (ctx.payload.all === true) {
-      const results = await runFastVariantIngest();
-      return { stats: { results } };
-    }
-    const result = await runRssIngestFast(
-      String(ctx.payload.variant ?? 'full'),
-      String(ctx.payload.lang ?? 'en'),
-    );
-    return { stats: { result } };
-  },
-};
-
-const rssIngestHandler: JobHandler = {
-  key: 'rss-ingest-full',
-  tier: 'batch',
-  async run(ctx: JobContext) {
-    if (ctx.payload.all === true) {
-      const results = await runAllVariantIngest();
-      return { stats: { results } };
-    }
-    const result = await runRssIngest(
-      String(ctx.payload.variant ?? 'full'),
-      String(ctx.payload.lang ?? 'en'),
-    );
-    return { stats: { result } };
-  },
-};
-
-const embeddingBatchHandler: JobHandler = {
-  key: 'embedding-batch',
-  tier: 'batch',
-  async run(ctx: JobContext) {
-    const batchSize = ctx.payload.batchSize != null ? Number(ctx.payload.batchSize) : undefined;
-    const result = await runEmbeddingBatch({ batchSize });
-    return { stats: { result } };
-  },
-};
-
-const stockNewsHandler: JobHandler = {
-  key: 'stock-news-ingest',
-  tier: 'batch',
-  async run(ctx: JobContext) {
-    const lang = String(ctx.payload.lang ?? 'en');
-    const categories = Array.isArray(ctx.payload.categories)
-      ? ctx.payload.categories.map(String)
-      : undefined;
-    const result = await runStockNewsIngest({ lang, categories });
-    return { stats: { ...result } };
-  },
-};
-
-const earningsHandler: JobHandler = {
-  key: 'earnings-ingest',
-  tier: 'batch',
-  async run(ctx: JobContext) {
-    const lang = String(ctx.payload.lang ?? 'en');
-    const result = await runEarningsIngest({ lang });
-    return { stats: { ...result } };
-  },
-};
-
-const knowledgeGraphHandler: JobHandler = {
-  key: 'knowledge-graph-build',
-  tier: 'heavy',
-  async run(ctx: JobContext) {
-    const lookbackHours = ctx.payload.lookbackHours != null
-      ? Number(ctx.payload.lookbackHours)
-      : undefined;
-    const sinceRaw = ctx.payload.cycleStart ?? ctx.payload.since;
-    const since = typeof sinceRaw === 'string' ? new Date(sinceRaw) : undefined;
-    const result = await runKnowledgeGraphBuild({
-      lookbackHours,
-      since: since && !Number.isNaN(since.getTime()) ? since : undefined,
-    });
-    return { stats: { ...result, dag: ctx.payload.dag === true } };
-  },
-};
-
-/** Per-market graph ingest stubs — implement data sources in platform:executor. */
-const enterpriseGraphIngestUsHandler: JobHandler = {
-  key: 'enterprise-graph-ingest-us',
-  tier: 'heavy',
-  async run(ctx: JobContext) {
-    const result = await runUsEquityGraphIngest(ctx);
-    return { stats: { ...result } };
-  },
-};
-
-const enterpriseGraphIngestHkHandler: JobHandler = {
-  key: 'enterprise-graph-ingest-hk',
-  tier: 'heavy',
-  async run(ctx: JobContext) {
-    const result = await runHkEquityGraphIngest(ctx);
-    return { stats: { ...result } };
-  },
-};
-
-const enterpriseGraphIngestEuHandler: JobHandler = {
-  key: 'enterprise-graph-ingest-eu',
-  tier: 'heavy',
-  async run(ctx: JobContext) {
-    const result = await runEuEquityGraphIngest(ctx);
-    return { stats: { ...result } };
-  },
-};
-
-/** CN A-share disclosures — cninfo-disclosure ingest plugin. */
-const disclosureIngestCnHandler: JobHandler = {
-  key: 'disclosure-ingest-cn',
-  tier: 'heavy',
-  async run(ctx: JobContext) {
-    const result = await runIngestPlugin('cninfo-disclosure', ctx);
-    return { stats: { ...result } };
-  },
-};
+/** One JobHandler per registered ingest plugin — executor dispatches via runIngestPlugin. */
+function ingestHandlersFromRegistry(): JobHandler[] {
+  return listIngestPlugins().map((meta) => ({
+    key: meta.handlerKey ?? meta.key,
+    tier: meta.tier,
+    async run(ctx: JobContext) {
+      const result = await runIngestPlugin(meta.key, ctx);
+      return { stats: { ...result } };
+    },
+  }));
+}
 
 const HANDLERS: JobHandler[] = [
   subscriptionHandler,
-  coldTierHandler,
-  rssIngestFastHandler,
-  rssIngestHandler,
-  embeddingBatchHandler,
-  stockNewsHandler,
-  earningsHandler,
-  knowledgeGraphHandler,
-  enterpriseGraphIngestUsHandler,
-  enterpriseGraphIngestHkHandler,
-  enterpriseGraphIngestEuHandler,
-  disclosureIngestCnHandler,
+  ...ingestHandlersFromRegistry(),
 ];
 
 const byKey = new Map(HANDLERS.map((h) => [h.key, h]));
@@ -201,4 +62,7 @@ export function listJobHandlers(): JobHandler[] {
 
 export function registerJobHandler(handler: JobHandler): void {
   byKey.set(handler.key, handler);
+  if (!HANDLERS.some((h) => h.key === handler.key)) {
+    HANDLERS.push(handler);
+  }
 }

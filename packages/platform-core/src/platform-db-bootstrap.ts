@@ -36,6 +36,7 @@ export const PLATFORM_MIGRATION_FILES = [
   { file: '023_schema_job_checkpoints.sql', optional: false },
   { file: '024_schema_integration_providers_crawl_engine.sql', optional: true },
   { file: '025_schema_engines_ingest_bindings.sql', optional: true },
+  { file: '026_schema_listed_companies_disclosures.sql', optional: true },
 ] as const;
 
 export interface BootstrapResult {

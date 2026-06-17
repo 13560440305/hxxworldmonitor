@@ -217,10 +217,35 @@ export async function countActiveJobRuns(handlerKey: string): Promise<number> {
   return Number(res.rows[0]?.n ?? 0);
 }
 
+export async function reclaimStaleJobRuns(lockTtlSec = 300): Promise<number> {
+  const res = await query<{ id: string }>(
+    `UPDATE job_runs SET
+       status = 'failed',
+       finished_at = NOW(),
+       error_message = 'Stale run reclaimed (worker lost or lock expired)',
+       locked_by = NULL,
+       locked_until = NULL
+     WHERE status = 'running'
+       AND (
+         (locked_until IS NOT NULL AND locked_until < NOW())
+         OR (
+           locked_until IS NULL
+           AND started_at IS NOT NULL
+           AND started_at < NOW() - ($1::int * INTERVAL '1 second')
+         )
+       )
+     RETURNING id`,
+    [lockTtlSec],
+  );
+  return res.rowCount ?? 0;
+}
+
 export async function claimNextPendingRun(
   workerId: string,
   lockTtlSec = 300,
 ): Promise<JobRunRow | null> {
+  await reclaimStaleJobRuns(lockTtlSec);
+
   return withTransaction(async (client) => {
     const pending = await client.query(
       `SELECT r.*, d.max_concurrency

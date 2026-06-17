@@ -116,6 +116,8 @@ let jobCheckpoints: JobCheckpointRow[] = [];
 let kgDagStatus: KgDagStatus | null = null;
 type JobsTab = 'tasks' | 'dag' | 'checkpoints' | 'runs';
 let jobsTab: JobsTab = 'tasks';
+let jobsPage = 1;
+const JOBS_PAGE_SIZE = 10;
 let reloadGeneration = 0;
 let modalOpenCount = 0;
 let renderQueued = false;
@@ -380,6 +382,7 @@ function renderShell(content: string): void {
       }
       section = next;
       if (next === 'integrations') integrationsPage = 1;
+      if (next === 'jobs') jobsPage = 1;
       if (next === 'subscriptions') {
         subscriptionFilterUserId = null;
         subscriptionsPage = 1;
@@ -1132,7 +1135,7 @@ function presetsSectionHint(): string {
 }
 
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。股票资讯 + 财报均成功后，若 <code>PLATFORM_KG_DAG_ENABLED</code> 未关闭，将自动入队 <code>knowledge-graph-build</code>。</p>`;
+  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。定时任务列表每页 ${JOBS_PAGE_SIZE} 条。巨潮采集选 <code>disclosure-ingest-cn</code>，点「立即运行」可配置参数。</p>`;
 }
 
 function kgDagReasonLabel(reason: string): string {
@@ -1239,16 +1242,93 @@ function formatEnqueueToast(result: EnqueueJobResult, action: string): string {
   return `${action}已入队（run ${runId}…），请确认 executor 在运行`;
 }
 
+function formatJobRunStats(run: JobRunRow): string {
+  if (!run.stats || !Object.keys(run.stats).length) return '';
+  if (run.handlerKey === 'disclosure-ingest-cn') {
+    const s = run.stats;
+    const parts = [
+      s.listed != null ? `listed=${s.listed}` : '',
+      s.filingsNew != null ? `new=${s.filingsNew}` : '',
+      s.skippedExisting != null ? `skip=${s.skippedExisting}` : '',
+      s.extracted != null ? `extracted=${s.extracted}` : '',
+      s.failed != null ? `failed=${s.failed}` : '',
+    ].filter(Boolean);
+    if (parts.length) return parts.join(' · ');
+  }
+  const raw = JSON.stringify(run.stats);
+  return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw;
+}
+
+function enqueueJobRunFlow(handlerKey: string, payload?: Record<string, unknown>): void {
+  if (jobEnqueueKey) return;
+  jobEnqueueKey = handlerKey;
+  render();
+  void enqueueAdminJob(handlerKey, payload)
+    .then((r) => showToast(formatEnqueueToast(r, '任务')))
+    .catch((err) => showToast(String(err), true))
+    .finally(() => {
+      jobEnqueueKey = null;
+      void reloadSection();
+    });
+}
+
+function openCninfoJobRunModal(def?: JobDefinitionRow): void {
+  const basePayload = { ...(def?.payload ?? { market: 'cn', source: 'cninfo' }) };
+  openModal(modalShell('运行 CNINFO 披露采集', `
+    <p class="pa-muted">任务将<strong>入队</strong>，需另开终端运行 <code>npm run platform:executor</code>。数据源「巨潮资讯网」须已启用。</p>
+    <div class="pa-field"><label>回溯天数 lookbackDays</label>
+      <input id="cnLookbackDays" type="number" min="1" max="365" value="7" /></div>
+    <div class="pa-field"><label>股票代码 symbols（可选，逗号分隔）</label>
+      <input id="cnSymbols" type="text" placeholder="600519,000001" /></div>
+    <div class="pa-field"><label>重采模式 recollect（可选）</label>
+      <select id="cnRecollect">
+        <option value="">默认增量</option>
+        <option value="failed">仅失败项 failed</option>
+        <option value="partial">失败+部分 partial</option>
+        <option value="all">全部 all</option>
+      </select></div>
+    <label class="pa-inline-check"><input type="checkbox" id="cnForce" /> force（忽略已采跳过，重新 download/extract）</label>
+  `, modalActions('入队运行')), (root) => {
+    bindModalActions(root, () => {
+      const lookbackRaw = (root.querySelector('#cnLookbackDays') as HTMLInputElement).value;
+      const lookbackDays = Math.max(1, Number(lookbackRaw) || 7);
+      const symbolsRaw = (root.querySelector('#cnSymbols') as HTMLInputElement).value.trim();
+      const recollect = (root.querySelector('#cnRecollect') as HTMLSelectElement).value;
+      const force = (root.querySelector('#cnForce') as HTMLInputElement).checked;
+      const payload: Record<string, unknown> = { ...basePayload, lookbackDays };
+      if (symbolsRaw) {
+        payload.symbols = symbolsRaw.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean);
+      }
+      if (recollect === 'failed' || recollect === 'partial' || recollect === 'all') {
+        payload.recollect = recollect;
+      }
+      if (force) payload.force = true;
+      closeModalFromRoot(root);
+      enqueueJobRunFlow('disclosure-ingest-cn', payload);
+    });
+  });
+}
+
+function goJobsPage(next: number): void {
+  const { page } = paginateList(jobDefinitions, next, JOBS_PAGE_SIZE);
+  jobsPage = page;
+  render();
+}
+
 function renderJobDefinitionsTable(): string {
   if (!jobDefinitions.length) {
     return '<p class="pa-muted">暂无任务定义。请启动 platform:api 并完成数据库 bootstrap。</p>';
   }
   const handlerSet = new Set(jobHandlers.map((h) => h.key));
-  const rows = jobDefinitions.map((def) => {
+  const { items, page, totalPages, total } = paginateList(jobDefinitions, jobsPage, JOBS_PAGE_SIZE);
+  jobsPage = page;
+  const rowOffset = (page - 1) * JOBS_PAGE_SIZE;
+  const rows = items.map((def, i) => {
     const registered = handlerSet.has(def.handlerKey);
     const runDisabled = jobEnqueueKey === def.handlerKey || !registered;
     return `
     <tr>
+      <td class="pa-muted pa-col-index">${rowOffset + i + 1}</td>
       <td><strong>${escapeHtml(def.displayName)}</strong><br><span class="pa-mono-sm pa-muted">${escapeHtml(def.handlerKey)}</span></td>
       <td>${escapeHtml(formatJobSchedule(def))}</td>
       <td><span class="pa-badge${def.tier === 'heavy' ? ' warn' : ''}">${escapeHtml(def.tier)}</span></td>
@@ -1270,8 +1350,9 @@ function renderJobDefinitionsTable(): string {
   }).join('');
   return `
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-      <th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
+      <th class="pa-col-index">序号</th><th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    ${renderTablePagination('jobs', page, totalPages, total, JOBS_PAGE_SIZE)}`;
 }
 
 function renderJobRunsTable(): string {
@@ -1283,7 +1364,7 @@ function renderJobRunsTable(): string {
       ? `<br><span class="pa-muted">${escapeHtml(run.errorMessage.slice(0, 120))}</span>`
       : '';
     const stats = run.stats && Object.keys(run.stats).length
-      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(JSON.stringify(run.stats).slice(0, 100))}</span>`
+      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(formatJobRunStats(run))}</span>`
       : '';
     return `
     <tr>
@@ -1533,15 +1614,11 @@ function bindSectionEvents(): void {
       const handlerKey = (el as HTMLElement).dataset.runJob ?? '';
       if (!handlerKey || jobEnqueueKey) return;
       const def = jobDefinitions.find((d) => d.handlerKey === handlerKey);
-      jobEnqueueKey = handlerKey;
-      render();
-      void enqueueAdminJob(handlerKey, def?.payload)
-        .then((r) => showToast(formatEnqueueToast(r, '任务')))
-        .catch((err) => showToast(String(err), true))
-        .finally(() => {
-          jobEnqueueKey = null;
-          void reloadSection();
-        });
+      if (handlerKey === 'disclosure-ingest-cn') {
+        openCninfoJobRunModal(def);
+        return;
+      }
+      enqueueJobRunFlow(handlerKey, def?.payload);
     });
   });
 
@@ -1608,6 +1685,15 @@ function bindSectionEvents(): void {
       const next = Number(btn.dataset.page);
       if (!Number.isFinite(next)) return;
       goIntegrationsPage(next);
+    });
+  });
+  app.querySelectorAll('[data-page-nav="jobs"]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const btn = el as HTMLButtonElement;
+      if (btn.disabled) return;
+      const next = Number(btn.dataset.page);
+      if (!Number.isFinite(next)) return;
+      goJobsPage(next);
     });
   });
   app.querySelectorAll('[data-del-integration]').forEach((el) => {

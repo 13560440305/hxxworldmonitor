@@ -183,6 +183,9 @@ export class PanelLayoutManager implements AppModule {
 
     if (isGraph) {
       void this.refreshEnterpriseGraphRegion();
+      if (this.activeContextPanel !== 'stocks') {
+        this.activateContextPanel('stocks');
+      }
       if (this.selectedCompanySymbol) {
         void this.loadEnterpriseGraph(this.selectedCompanySymbol, this.selectedCompanyMarket ?? undefined);
       } else {
@@ -193,7 +196,7 @@ export class PanelLayoutManager implements AppModule {
 
   private syncStocksSelectableMode(): void {
     const stocksPanel = this.ctx.panels['stocks'] as StocksPanel | undefined;
-    const selectable = this.activeViewTab === 'enterprise-graph' && this.activeContextPanel === 'stocks';
+    const selectable = this.activeViewTab === 'enterprise-graph';
     stocksPanel?.setSelectableMode(selectable);
   }
 

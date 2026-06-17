@@ -64,10 +64,14 @@ export class EnterpriseGraphView {
     const radius = Math.min(width, height) * 0.32;
 
     const companyNodes = graph.nodes.filter((n) => n.entityType === 'company');
-    const others = graph.nodes.filter((n) => n.entityType !== 'company');
+    const filingNodes = graph.nodes.filter((n) => n.entityType === 'filing');
+    const others = graph.nodes.filter(
+      (n) => n.entityType !== 'company' && n.entityType !== 'filing',
+    );
     const ordered = [
       center,
       ...companyNodes.filter((n) => n.id !== center.id),
+      ...filingNodes.filter((n) => n.id !== center.id),
       ...others.filter((n) => n.id !== center.id),
     ];
 
@@ -105,6 +109,7 @@ export class EnterpriseGraphView {
 
     this.canvasEl.querySelectorAll<SVGGElement>('.eg-node').forEach((el) => {
       el.addEventListener('click', () => {
+        if (el.classList.contains('eg-node-filing')) return;
         const symbol = el.dataset.symbol;
         const market = el.dataset.market ?? graph.market;
         if (symbol && this.onSelectCompany) {
@@ -131,11 +136,17 @@ export class EnterpriseGraphView {
     pos: { x: number; y: number },
     isCenter: boolean,
   ): string {
-    const label = node.symbol.length <= 8 ? node.symbol : node.symbol.slice(0, 8);
-    const r = isCenter ? 34 : 26;
+    const isFiling = node.entityType === 'filing';
+    const label = isFiling
+      ? 'DOC'
+      : node.symbol.length <= 8
+        ? node.symbol
+        : node.symbol.slice(0, 8);
+    const r = isCenter ? 34 : isFiling ? 20 : 26;
+    const filingClass = isFiling ? ' eg-node-filing' : '';
     return `
-      <g class="eg-node ${isCenter ? 'eg-node-center' : ''}" data-symbol="${escapeHtml(node.symbol)}" data-market="${escapeHtml(node.market ?? '')}" style="cursor:pointer">
-        <circle cx="${pos.x}" cy="${pos.y}" r="${r}" class="eg-node-circle" />
+      <g class="eg-node ${isCenter ? 'eg-node-center' : ''}${filingClass}" data-symbol="${escapeHtml(node.symbol)}" data-market="${escapeHtml(node.market ?? '')}" style="cursor:${isFiling ? 'default' : 'pointer'}">
+        <circle cx="${pos.x}" cy="${pos.y}" r="${r}" class="eg-node-circle${isFiling ? ' eg-node-circle-filing' : ''}" />
         <text x="${pos.x}" y="${pos.y - 4}" text-anchor="middle" class="eg-node-symbol">${escapeHtml(label)}</text>
         <text x="${pos.x}" y="${pos.y + 12}" text-anchor="middle" class="eg-node-name">${escapeHtml(node.name.slice(0, 14))}</text>
       </g>

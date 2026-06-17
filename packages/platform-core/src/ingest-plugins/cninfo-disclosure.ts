@@ -1,6 +1,6 @@
 import type { IngestPlugin } from './types.js';
+import { runCninfoDisclosurePipeline } from '../enterprise-graph/cninfo/pipeline.js';
 
-/** Hardcoded CNINFO endpoints — not configured in Admin (only site root + engine binding are). */
 export const CNINFO_DISCLOSURE_PATHS = {
   announcementSearch: '/new/hisAnnouncement/query',
   announcementDetail: '/new/disclosure/detail',
@@ -9,12 +9,15 @@ export const CNINFO_DISCLOSURE_PATHS = {
 
 export const cninfoDisclosurePlugin: IngestPlugin = {
   key: 'cninfo-disclosure',
+  handlerKey: 'disclosure-ingest-cn',
   displayName: '巨潮资讯网披露采集',
   sourceSlug: 'cninfo',
+  requiresBinding: true,
   tier: 'heavy',
-  async run(_ctx, deps) {
-    const { source, engine, engineSlug } = deps.binding;
-    const cninfo = source ?? deps.source;
+  async run(ctx, deps) {
+    const binding = deps!.binding;
+    const { source, engine, engineSlug } = binding;
+    const cninfo = source ?? deps!.source;
 
     if (!cninfo?.enabled || !cninfo.baseUrl) {
       return {
@@ -26,35 +29,39 @@ export const cninfoDisclosurePlugin: IngestPlugin = {
       };
     }
 
-    if (!engineSlug) {
-      return {
-        market: 'cn',
-        status: 'stub',
-        message: '请为巨潮资讯网选择采集引擎（编辑 → 采集引擎）',
-        entitiesUpserted: 0,
-        edgesUpserted: 0,
-      };
-    }
-
     const resolvedEngine = engine ?? deps.engine;
-    if (!resolvedEngine?.enabled || !resolvedEngine.apiKey) {
+    const engineReady = Boolean(
+      engineSlug && resolvedEngine?.enabled && resolvedEngine.apiKey,
+    );
+
+    try {
+      const stats = await runCninfoDisclosurePipeline(ctx, {
+        cninfoBaseUrl: cninfo.baseUrl,
+        engine: engineReady ? resolvedEngine! : null,
+        workspaceId: ctx.workspaceId,
+      });
+
+      const engineHint = engineReady
+        ? ''
+        : '（未配置 Firecrawl：仅 direct HTTP 下载/PDF 解析，失败项不会走 Firecrawl 降级）';
+
+      return {
+        status: stats.status,
+        market: stats.market,
+        message: `CNINFO ingest: listed=${stats.listed} new=${stats.filingsNew} skipped=${stats.skippedExisting} extracted=${stats.extracted} failed=${stats.failed}${engineHint}`,
+        entitiesUpserted: stats.entitiesUpserted,
+        edgesUpserted: stats.edgesUpserted,
+        ...stats,
+      };
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
       return {
         market: 'cn',
-        status: 'stub',
-        message: `请在 Admin「采集引擎」中启用并配置 ${engineSlug} 的 API Key`,
+        status: 'error',
+        message,
         entitiesUpserted: 0,
         edgesUpserted: 0,
       };
     }
-
-    return {
-      market: 'cn',
-      status: 'stub',
-      message:
-        'CN disclosure ingest stub — implement Firecrawl scrape + PDF parse in platform:executor '
-        + `(disclosure: ${cninfo.baseUrl}; engine: ${engineSlug} @ ${resolvedEngine.baseUrl})`,
-      entitiesUpserted: 0,
-      edgesUpserted: 0,
-    };
   },
 };

@@ -1,5 +1,6 @@
 import { getDefaultWorkspaceId } from '@hxxworldmonitor/shared/db.js';
 import type { PlatformLogger } from '@hxxworldmonitor/shared/platform-logger.js';
+import { listIngestPlugins } from '../ingest-plugins/registry.js';
 import {
   enqueueJobRun,
   listDueJobDefinitions,
@@ -7,7 +8,7 @@ import {
   releaseSchedulerLock,
   upsertJobDefinition,
 } from './job-repository.js';
-import type { JobDefinitionSeed } from './types.js';
+import type { JobDefinitionSeed, JobTier } from './types.js';
 
 export const DEFAULT_JOB_DEFINITIONS: JobDefinitionSeed[] = [
   {
@@ -145,13 +146,54 @@ export const DEFAULT_JOB_DEFINITIONS: JobDefinitionSeed[] = [
   },
 ];
 
+/** Ensure every registered handler has a job_definitions row (idempotent). */
+function handlerRegistrySeeds(): JobDefinitionSeed[] {
+  const seeds: JobDefinitionSeed[] = [
+    {
+      handlerKey: 'subscription-match-deliver',
+      displayName: 'Subscription match & deliver',
+      tier: 'batch',
+      scheduleKind: 'interval',
+      intervalSeconds: 3600,
+      timezone: 'UTC',
+      maxConcurrency: 1,
+      timeoutSec: 1800,
+    },
+  ];
+  for (const plugin of listIngestPlugins()) {
+    const handlerKey = plugin.handlerKey ?? plugin.key;
+    seeds.push({
+      handlerKey,
+      displayName: plugin.displayName,
+      tier: plugin.tier as JobTier,
+      scheduleKind: 'interval',
+      intervalSeconds: 86400,
+      timezone: 'UTC',
+      enabled: false,
+      maxConcurrency: 1,
+      timeoutSec: plugin.tier === 'heavy' ? 14400 : 1800,
+    });
+  }
+  return seeds;
+}
+
 export async function seedJobDefinitions(log?: PlatformLogger): Promise<number> {
   const workspaceId = getDefaultWorkspaceId();
+  const byKey = new Map<string, JobDefinitionSeed>();
+
+  for (const seed of handlerRegistrySeeds()) {
+    byKey.set(seed.handlerKey, seed);
+  }
   for (const seed of DEFAULT_JOB_DEFINITIONS) {
+    byKey.set(seed.handlerKey, { ...byKey.get(seed.handlerKey), ...seed });
+  }
+
+  const merged = [...byKey.values()];
+  for (const seed of merged) {
     await upsertJobDefinition(workspaceId, seed);
   }
-  log?.info('job definitions seeded', { count: DEFAULT_JOB_DEFINITIONS.length });
-  return DEFAULT_JOB_DEFINITIONS.length;
+  log?.info('job definitions seeded', { count: merged.length });
+  return merged.length;
 }
 
 export async function runSchedulerTick(log: PlatformLogger): Promise<number> {

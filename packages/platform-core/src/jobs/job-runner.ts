@@ -5,6 +5,8 @@ import {
   claimNextPendingRun,
   finishJobRun,
   getHandlerTimeoutSec,
+  countActiveJobRuns,
+  countRunningJobs,
 } from './job-repository.js';
 import { setJobCheckpoint } from './job-checkpoint.js';
 import { maybeEnqueueKnowledgeGraphBuild } from './job-dag.js';
@@ -70,7 +72,20 @@ export async function runExecutorOnce(
   log: PlatformLogger,
 ): Promise<boolean> {
   const run = await claimNextPendingRun(workerId);
-  if (!run) return false;
+  if (!run) {
+    const pending = await countActiveJobRuns('disclosure-ingest-cn');
+    const running = await countRunningJobs('disclosure-ingest-cn');
+    if (pending > 0 || running > 0) {
+      log.info('no job claimed', {
+        hint: running > 0
+          ? 'disclosure-ingest-cn has a running job (max_concurrency=1); stale locks are auto-reclaimed on next claim'
+          : 'pending jobs exist but another handler may be blocking or scheduled_at is in the future',
+        disclosurePendingOrRunning: pending,
+        disclosureRunning: running,
+      });
+    }
+    return false;
+  }
   await executeJobRun(run, workerId, log);
   return true;
 }

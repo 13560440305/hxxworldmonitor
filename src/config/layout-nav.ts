@@ -30,7 +30,7 @@ export const LAYOUT_SIDEBAR_GROUPS: LayoutNavGroup[] = [
   },
   {
     labelKey: 'layout.nav.markets',
-    panelKeys: ['markets', 'commodities', 'finance', 'polymarket', 'macro-signals', 'heatmap'],
+    panelKeys: ['markets', 'stocks', 'commodities', 'finance', 'polymarket', 'macro-signals', 'heatmap'],
     variants: ['full'],
   },
   {
@@ -76,7 +76,7 @@ export const VIEW_TAB_PANEL: Record<string, string> = {
 };
 
 export const VIEW_TAB_PANEL_BY_VARIANT: Record<string, Record<string, string>> = {
-  full: { ...VIEW_TAB_PANEL, 'enterprise-graph': 'markets' },
+  full: { ...VIEW_TAB_PANEL, 'enterprise-graph': 'stocks' },
   tech: { globe: 'live-news', timeline: 'events', heatmap: 'heatmap', 'country-intel': 'tech-readiness', 'enterprise-graph': 'stocks' },
   finance: { globe: 'stocks', timeline: 'analysis', heatmap: 'heatmap', 'country-intel': 'macro-signals', 'enterprise-graph': 'stocks' },
   happy: { globe: 'positive-feed', timeline: 'breakthroughs', heatmap: 'progress', 'country-intel': 'spotlight' },
