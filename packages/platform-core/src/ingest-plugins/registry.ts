@@ -1,6 +1,7 @@
 import type { IngestPlugin, IngestPluginMeta } from './types.js';
 import { pluginHandlerKey } from './types.js';
 import { cninfoDisclosurePlugin } from './cninfo-disclosure.js';
+import { disclosureRelationExtractPlugin } from './disclosure-relation-extract.js';
 import { rssIngestFastPlugin } from './rss-ingest-fast.js';
 import { rssIngestFullPlugin } from './rss-ingest-full.js';
 import { coldTierArchivePlugin } from './cold-tier-archive.js';
@@ -24,6 +25,7 @@ const ALL_PLUGINS: IngestPlugin[] = [
   enterpriseGraphHkPlugin,
   enterpriseGraphEuPlugin,
   cninfoDisclosurePlugin,
+  disclosureRelationExtractPlugin,
 ];
 
 const plugins = new Map<string, IngestPlugin>();

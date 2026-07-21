@@ -10,13 +10,10 @@ function makeRequest(origin) {
   return new Request('https://worldmonitor.app/api/test', { headers });
 }
 
-test('allows desktop Tauri origins', () => {
+test('allows localhost dev origins', () => {
   const origins = [
-    'https://tauri.localhost',
-    'https://abc123.tauri.localhost',
-    'tauri://localhost',
-    'asset://localhost',
     'http://127.0.0.1:46123',
+    'http://localhost:5173',
   ];
 
   for (const origin of origins) {

@@ -1,7 +1,12 @@
 import { isDatabaseEnabled } from '@hxxworldmonitor/shared/db.js';
 import { buildCatalogGraph, getCatalogCompany, listCatalogCompanies } from './catalog.js';
 import { findKgCompanyBySymbol, getKgNeighborGraph, listKgCompanies } from './kg-repository.js';
-import { listListedSecurities, findListedSecurityBySymbol } from './listed-companies-repository.js';
+import {
+  listListedSecurities,
+  findListedSecurityBySymbol,
+  listFilingsBySymbol,
+  type CompanyFilingListItem,
+} from './listed-companies-repository.js';
 import { ENTERPRISE_GRAPH_MARKETS, getEnterpriseGraphMarket, resolveMarketForRegion } from './markets.js';
 import type {
   EnterpriseGraphCompany,
@@ -145,6 +150,18 @@ export async function getEnterpriseGraph(
     depth,
     ...(marketMeta ? {} : {}),
   };
+}
+
+export async function listCompanyFilings(
+  symbol: string,
+  opts?: { market?: string; limit?: number },
+): Promise<CompanyFilingListItem[]> {
+  if (!isDatabaseEnabled()) return [];
+  return listFilingsBySymbol({
+    symbol,
+    market: opts?.market,
+    limit: opts?.limit,
+  });
 }
 
 export { resolveMarketForRegion, getEnterpriseGraphMarket };

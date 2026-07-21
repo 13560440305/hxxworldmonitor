@@ -1,6 +1,7 @@
 # Platform Monorepo 拆分说明
 
 > **状态：** 已落地（npm workspaces）  
+> **总览请先读：** [系统目标与架构.md](./系统目标与架构.md) · [文档索引](./README.md)  
 > **关联：** [MONOREPO.md](./MONOREPO.md) · [Platform消费生产端拆分设计.md](./Platform消费生产端拆分设计.md) · [deploy/README.md](../deploy/README.md)
 
 ---

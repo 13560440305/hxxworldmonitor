@@ -132,7 +132,7 @@ describe('Bootstrap endpoint (api/bootstrap.js)', () => {
     assert.ok(src.includes('stale-while-revalidate'), 'Missing stale-while-revalidate');
   });
 
-  it('validates API key for desktop origins', () => {
+  it('validates API key for untrusted origins', () => {
     assert.ok(src.includes('validateApiKey'), 'Missing API key validation');
   });
 

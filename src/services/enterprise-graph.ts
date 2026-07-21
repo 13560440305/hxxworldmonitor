@@ -19,7 +19,7 @@ export interface EnterpriseGraphNodeDto {
   id: string;
   symbol: string;
   name: string;
-  entityType: 'company' | 'news_item' | 'sector' | 'filing';
+  entityType: 'company' | 'news_item' | 'sector' | 'filing' | 'org';
   market?: EnterpriseGraphMarketId;
 }
 
@@ -36,6 +36,17 @@ export interface EnterpriseGraphDto {
   market: EnterpriseGraphMarketId;
   source: 'kg' | 'catalog' | 'db';
   depth: number;
+}
+
+export interface CompanyFilingDto {
+  id: string;
+  title: string | null;
+  publishedAt: string | null;
+  parseStatus: string;
+  sourceUrl: string | null;
+  sourceDocId: string | null;
+  category: string | null;
+  source: string | null;
 }
 
 function apiPrefix(): string | null {
@@ -106,6 +117,68 @@ export async function fetchEnterpriseGraph(
   }
 
   return buildLocalEnterpriseGraph(symbol, marketId, depth);
+}
+
+export async function fetchCompanyFilings(
+  symbol: string,
+  market?: EnterpriseGraphMarketId,
+  limit = 20,
+): Promise<CompanyFilingDto[]> {
+  const prefix = apiPrefix();
+  if (!prefix) return [];
+
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (market) params.set('market', market);
+
+  try {
+    const resp = await fetch(
+      `${prefix}/v1/enterprise-graph/companies/${encodeURIComponent(symbol)}/filings?${params}`,
+      { signal: AbortSignal.timeout(12_000) },
+    );
+    if (!resp.ok) return [];
+    const data = await resp.json() as { filings?: CompanyFilingDto[] };
+    return data.filings ?? [];
+  } catch {
+    return [];
+  }
+}
+
+export interface ExtractRelationsResult {
+  ok: boolean;
+  symbol: string;
+  scanned: number;
+  relationsExtracted: number;
+  edgesUpserted: number;
+  method?: string;
+  message?: string;
+}
+
+export async function extractCompanyRelations(
+  symbol: string,
+  opts?: { useLlm?: boolean; force?: boolean; limit?: number },
+): Promise<ExtractRelationsResult | null> {
+  const prefix = apiPrefix();
+  if (!prefix) return null;
+
+  try {
+    const resp = await fetch(
+      `${prefix}/v1/enterprise-graph/companies/${encodeURIComponent(symbol)}/extract-relations`,
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          useLlm: opts?.useLlm === true,
+          force: opts?.force === true,
+          limit: opts?.limit ?? 30,
+        }),
+        signal: AbortSignal.timeout(120_000),
+      },
+    );
+    if (!resp.ok) return null;
+    return await resp.json() as ExtractRelationsResult;
+  } catch {
+    return null;
+  }
 }
 
 /** Peer hints for offline / API-fallback graph (subset of platform catalog). */

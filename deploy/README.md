@@ -1,6 +1,6 @@
 # Self-hosted platform — 环境、编译与运行
 
-完整方案说明见 [docs/自托管数据平台改造方案.md](../docs/自托管数据平台改造方案.md#环境配置编译与运行)。
+架构与功能状态见 [docs/系统目标与架构.md](../docs/系统目标与架构.md) · [docs/功能清单.md](../docs/功能清单.md) · [docs/README.md](../docs/README.md)。
 
 ---
 
@@ -168,10 +168,6 @@ npm run typecheck:all
 # 生产前端构建 → dist/
 npm run build
 npm run build:full    # full 变体
-
-# 桌面版
-npm run build:sidecar-sebuf
-npm run build:desktop
 ```
 
 日常开发 Platform 服务**不需要编译**，`tsx` 直接运行。

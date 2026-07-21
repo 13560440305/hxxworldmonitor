@@ -723,6 +723,20 @@ export interface JobRunRow {
   stats: Record<string, unknown> | null;
 }
 
+export interface HandlerQueueStatus {
+  handlerKey: string;
+  pending: number;
+  running: number;
+  maxConcurrency: number;
+  blocked: boolean;
+  runningRuns: Array<{
+    id: string;
+    startedAt: string | null;
+    lockedUntil: string | null;
+    lockedBy: string | null;
+  }>;
+}
+
 export interface EnqueueJobResult {
   ok: boolean;
   queued?: boolean;
@@ -733,6 +747,7 @@ export interface EnqueueJobResult {
   subscriptions?: number;
   totalMatched?: number;
   processed?: number;
+  queueStatus?: HandlerQueueStatus;
 }
 
 export async function fetchJobHandlers(): Promise<JobHandlerInfo[]> {
@@ -766,6 +781,47 @@ export async function enqueueAdminJob(
       body: JSON.stringify({ handlerKey, payload }),
     }),
   );
+}
+
+export async function fetchJobQueueStatus(
+  handlerKey = 'disclosure-ingest-cn',
+): Promise<HandlerQueueStatus> {
+  const data = await parseJson<{ status: HandlerQueueStatus }>(
+    await adminFetch(`/v1/admin/jobs/queue-status?handlerKey=${encodeURIComponent(handlerKey)}`),
+  );
+  return data.status;
+}
+
+export async function reclaimStaleJobs(lockTtlSec = 300): Promise<{ ok: boolean; reclaimed: number }> {
+  return parseJson(
+    await adminFetch('/v1/admin/jobs/reclaim-stale', {
+      method: 'POST',
+      body: JSON.stringify({ lockTtlSec }),
+    }),
+  );
+}
+
+export interface CninfoDisclosureStats {
+  total: number;
+  byStatus: Record<string, number>;
+  recollectableFailed: number;
+  recollectablePartial: number;
+  maxRetry: number;
+  samples: Array<{
+    id: string;
+    symbol: string;
+    title: string | null;
+    parseStatus: string;
+    retryCount: number;
+    errorMessage: string | null;
+  }>;
+}
+
+export async function fetchDisclosureStats(): Promise<CninfoDisclosureStats> {
+  const data = await parseJson<{ stats: CninfoDisclosureStats }>(
+    await adminFetch('/v1/admin/disclosure/stats'),
+  );
+  return data.stats;
 }
 
 export async function patchJobDefinitionEnabled(

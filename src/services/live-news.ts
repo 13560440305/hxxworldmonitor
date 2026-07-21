@@ -1,5 +1,3 @@
-import { isDesktopRuntime, getRemoteApiBaseUrl } from '@/services/runtime';
-
 interface LiveVideoInfo {
   videoId: string | null;
   hlsUrl: string | null;
@@ -15,8 +13,7 @@ export async function fetchLiveVideoInfo(channelHandle: string): Promise<LiveVid
   }
 
   try {
-    const baseUrl = isDesktopRuntime() ? getRemoteApiBaseUrl() : '';
-    const res = await fetch(`${baseUrl}/api/youtube/live?channel=${encodeURIComponent(channelHandle)}`);
+    const res = await fetch(`/api/youtube/live?channel=${encodeURIComponent(channelHandle)}`);
     if (!res.ok) throw new Error('API error');
     const data = await res.json();
     const videoId = data.videoId || null;

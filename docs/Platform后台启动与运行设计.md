@@ -1,7 +1,8 @@
 # Platform 后台启动与运行设计
 
-> 本文档说明 World Monitor 自托管 Platform 后台（`npm run platform:*`）的启动流程、进程分工与整体运行架构。  
-> 相关文档：[deploy/README.md](../deploy/README.md) · [自托管数据平台改造方案.md](./自托管数据平台改造方案.md)
+> **总览与现行架构：** [系统目标与架构.md](./系统目标与架构.md)（进程名以 `apps/platform-*` 为准）。  
+> 本文保留启动步骤与运维细节；若与 Monorepo 拆分后的路径冲突，以 `apps/` + 根 `package.json` 的 `platform:*` 为准。  
+> 相关：[deploy/README.md](../deploy/README.md) · [功能清单.md](./功能清单.md) · [文档说明清单.md](./文档说明清单.md)
 
 ---
 
@@ -12,7 +13,7 @@ World Monitor 的后端不是单一进程，而是**多进程 + 按需请求**�
 ```mermaid
 flowchart TB
   subgraph frontend [前端]
-    SPA[Vite SPA / Tauri WebView]
+    SPA[Vite SPA 浏览器]
   end
 
   subgraph platform [自托管 Platform 后台 - 8787]
@@ -28,15 +29,13 @@ flowchart TB
     OSS[(MinIO/OSS 可选)]
   end
 
-  subgraph legacy [原 World Monitor API 层]
-    Vercel[api/ Vercel Edge Functions]
-    Sidecar[local-api-server.mjs :46123]
+  subgraph legacy [仪表盘 API 层]
+    Vercel[api/ Vercel Edge 或 Vite 开发中间件]
     Sebuf[server/worldmonitor/* handlers]
   end
 
   SPA -->|/platform/*| API
-  SPA -->|/api/*| Vercel
-  SPA -->|桌面模式| Sidecar
+  SPA -->|/api/* 开发同源| Vercel
 
   API --> PG
   API --> REDIS
@@ -46,19 +45,17 @@ flowchart TB
   EMB --> REDIS
   SUB --> PG
 
-  Sidecar --> Sebuf
   Sebuf --> 外部数据源
   Vercel --> 外部数据源
 ```
 
 | 组件 | 入口 | 端口/方式 | 职责 |
 |------|------|-----------|------|
-| **Platform API** | `scripts/platform-api-server.ts` | `:8787` | REST 聚合、管理后台、用户认证、HXXBOT 工具 |
-| **Ingest Worker** | `scripts/platform-ingest-worker.ts` | 无 HTTP | 定时 RSS 采集入库 |
-| **Embedding Worker** | `scripts/platform-embedding-worker.ts` | 无 HTTP | 新闻向量化（语义检索） |
-| **Subscription Worker** | `scripts/platform-subscription-worker.ts` | 无 HTTP | 订阅匹配 + 邮件投递 |
-| **Vercel API** | `api/*.js` | 云端 Edge | 原仪表盘 60+ 代理端点 |
-| **Desktop Sidecar** | `src-tauri/sidecar/local-api-server.mjs` | `127.0.0.1:46123` | 桌面版本地 API 网关 |
+| **Platform API** | `apps/platform-api`（`npm run platform:api`） | `:8787` | REST 聚合、管理后台、用户认证、HXXBOT 工具 |
+| **Ingest Worker** | `apps/platform-ingest*` 或 Job | 无 HTTP | 定时 RSS 采集入库 |
+| **Embedding Worker** | `apps/platform-embed` 或 Job | 无 HTTP | 新闻向量化（语义检索） |
+| **Subscription** | Job `subscription-match-deliver`（推荐） | 无 HTTP | 订阅匹配 + 邮件投递 |
+| **Vercel / Vite `/api/*`** | `api/*.js` + `server/worldmonitor/*` | 云端 Edge 或开发态 Vite | 仪表盘实时代理与 sebuf |
 
 日常开发自托管后台时，典型是：**1 个 API 进程 + 1 个 Ingest 进程 + PostgreSQL**（Embedding / Subscription 按需启动）。
 
@@ -258,9 +255,9 @@ Docker Compose（`deploy/docker-compose.yml`）提供 PG + Redis + MinIO，但�
 
 ### 4. 与原 API 层的关系
 
-- **`server/worldmonitor/*`**：TypeScript 业务 handler（RSS 解析、冲突数据等），被 Vite sebuf 插件和 Sidecar 动态加载
+- **`server/worldmonitor/*`**：TypeScript 业务 handler（RSS 解析、冲突数据等），由 Vite sebuf 插件在开发态加载
 - **`api/*.js`**：Vercel 无服务器函数，云端部署用
-- **Platform 层**：新增的自托管「数据平台」，把新闻持久化到 PG，并扩展订阅、简报、管理后台
+- **Platform 层**：自托管「数据平台」，把新闻持久化到 PG，并扩展订阅、简报、管理后台
 
 两套 API **并行存在**，Platform 是增量改造，不是替换全部 `/api`。
 
@@ -427,7 +424,7 @@ flowchart LR
 | API 层 | 路径 | 进程模型 |
 |--------|------|----------|
 | Platform API | `/platform/*` | 独立 Node 进程（:8787） |
-| 仪表盘 API | `/api/*` | 开发时在 **Vite 同进程**（`sebufApiPlugin`）；桌面版在 **Sidecar**；云端为 Vercel 函数 |
+| 仪表盘 API | `/api/*` | 开发时在 **Vite 同进程**（`sebufApiPlugin`）；云端为 Vercel 函数 |
 
 Ingest **只采集 RSS 新闻**写入 PG；地震、市场、冲突等仪表盘数据仍由 `/api/*` **按需实时查上游**，不经过 Ingest Worker。
 

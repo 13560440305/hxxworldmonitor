@@ -7,7 +7,6 @@ import { DEFAULT_PANELS, STORAGE_KEYS } from '@/config';
 import { loadFromStorage, saveToStorage } from '@/utils';
 import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
-import { isDesktopRuntime } from '@/services/runtime';
 
 function getLocalizedPanelName(panelKey: string, fallback: string): string {
   if (panelKey === 'runtime-config') {
@@ -31,11 +30,9 @@ export function initSettingsWindow(): void {
     DEFAULT_PANELS
   );
 
-  const isDesktopApp = isDesktopRuntime();
-
   function render(): void {
     const panelEntries = Object.entries(panelSettings).filter(
-      ([key]) => key !== 'runtime-config' || isDesktopApp
+      ([key]) => key !== 'runtime-config',
     );
     const panelHtml = panelEntries
       .map(
@@ -44,7 +41,7 @@ export function initSettingsWindow(): void {
           <div class="panel-toggle-checkbox">${panel.enabled ? '✓' : ''}</div>
           <span class="panel-toggle-label">${getLocalizedPanelName(key, panel.name)}</span>
         </div>
-      `
+      `,
       )
       .join('');
 

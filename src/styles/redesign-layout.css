@@ -577,9 +577,41 @@ body.wm-layout {
   text-align: right;
 }
 
+.eg-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
+.eg-action-btn {
+  font-size: 11px;
+  padding: 4px 10px;
+  border-radius: 4px;
+  border: 0.5px solid var(--border-subtle);
+  background: rgba(74, 222, 128, 0.12);
+  color: var(--text);
+  cursor: pointer;
+}
+
+.eg-action-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.eg-action-check {
+  font-size: 11px;
+  color: var(--text-muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+}
+
 .eg-canvas {
-  flex: 1;
-  min-height: 0;
+  flex: 1 1 auto;
+  min-height: 200px;
   border: 0.5px solid var(--border-subtle);
   border-radius: 8px;
   background: var(--surface);
@@ -597,6 +629,24 @@ body.wm-layout {
 .eg-edge {
   stroke: rgba(74, 222, 128, 0.35);
   stroke-width: 1.5;
+}
+
+.eg-edge-subsidiary { stroke: rgba(56, 189, 248, 0.55); }
+.eg-edge-shareholder,
+.eg-edge-controller { stroke: rgba(251, 191, 36, 0.6); }
+.eg-edge-related_party { stroke: rgba(167, 139, 250, 0.55); }
+.eg-edge-guarantee { stroke: rgba(248, 113, 113, 0.55); }
+.eg-edge-filed { stroke: rgba(148, 163, 184, 0.45); }
+
+.eg-edge-label {
+  fill: var(--text-muted);
+  font-size: 9px;
+  pointer-events: none;
+}
+
+.eg-node-circle-org {
+  fill: rgba(56, 189, 248, 0.2);
+  stroke: rgba(56, 189, 248, 0.7);
 }
 
 .eg-node-circle {
@@ -647,6 +697,92 @@ body.wm-layout {
   flex: 1 1 100%;
   font-size: 10px;
   color: var(--text-muted);
+}
+
+.eg-filings {
+  flex-shrink: 0;
+  max-height: 180px;
+  overflow: auto;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.08));
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+.eg-filings-head {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-dim);
+  margin-bottom: 6px;
+}
+
+.eg-filings-empty {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+.eg-filings-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.eg-filing-item {
+  padding: 6px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.eg-filing-item.eg-filing-status-failed {
+  border-left: 2px solid rgba(248, 113, 113, 0.8);
+  background: rgba(248, 113, 113, 0.06);
+}
+
+.eg-filing-item.eg-filing-status-partial {
+  border-left: 2px solid rgba(251, 191, 36, 0.8);
+  background: rgba(251, 191, 36, 0.06);
+}
+
+.eg-filings-hint {
+  font-size: 10px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.eg-filing-title {
+  font-size: 12px;
+  color: var(--text);
+  line-height: 1.35;
+}
+
+.eg-filing-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 4px;
+  font-size: 10px;
+  color: var(--text-muted);
+}
+
+.eg-filing-status {
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.eg-filing-link {
+  color: var(--accent, #4ade80);
+  text-decoration: none;
+}
+
+.eg-filing-link:hover {
+  text-decoration: underline;
+}
+
+.eg-node-circle-filing {
+  fill: rgba(148, 163, 184, 0.35);
+  stroke: rgba(148, 163, 184, 0.7);
 }
 
 .market-item-selectable {

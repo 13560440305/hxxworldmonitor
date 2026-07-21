@@ -58,6 +58,8 @@ import { filterSymbolsForRegion, listCatalogCompaniesForRegion, resolveStockMark
 import {
   fetchEnterpriseGraph,
   fetchEnterpriseGraphCompanies,
+  fetchCompanyFilings,
+  extractCompanyRelations,
   resolveMarketForRegion,
 } from '@/services/enterprise-graph';
 import { debounce, saveToStorage } from '@/utils';
@@ -208,6 +210,9 @@ export class PanelLayoutManager implements AppModule {
     this.enterpriseGraphView.setOnSelectCompany((symbol, market) => {
       void this.loadEnterpriseGraph(symbol, market);
     });
+    this.enterpriseGraphView.setOnExtractRelations((opts) => {
+      void this.extractRelationsForSelected(opts);
+    });
 
     const stocksPanel = this.ctx.panels['stocks'] as StocksPanel | undefined;
     stocksPanel?.setOnCompanySelect((symbol, market) => {
@@ -258,22 +263,39 @@ export class PanelLayoutManager implements AppModule {
     this.enterpriseGraphView?.showLoading(symbol);
 
     const region = this.getCurrentRegion();
-    const graph = await fetchEnterpriseGraph(
-      symbol,
-      region,
-      (market ?? this.selectedCompanyMarket) as 'us' | 'hk' | 'eu' | 'cn',
-    );
+    const marketId = (market ?? this.selectedCompanyMarket) as 'us' | 'hk' | 'eu' | 'cn';
+    const [graph, filings] = await Promise.all([
+      fetchEnterpriseGraph(symbol, region, marketId),
+      fetchCompanyFilings(symbol, marketId, 20),
+    ]);
 
     if (!graph) {
       this.enterpriseGraphView?.showError(t('components.enterpriseGraph.loadFailed'));
       return;
     }
 
-    this.enterpriseGraphView?.renderGraph(graph);
+    this.enterpriseGraphView?.renderGraph(graph, filings);
     const titleEl = document.getElementById('contextPanelTitle');
     if (titleEl) {
       titleEl.textContent = `${t('layout.viewEnterpriseGraph')} · ${graph.center.name}`;
     }
+  }
+
+  private async extractRelationsForSelected(opts: { useLlm: boolean; force: boolean }): Promise<void> {
+    const symbol = this.selectedCompanySymbol;
+    if (!symbol) return;
+    this.enterpriseGraphView?.setExtracting(true);
+    const result = await extractCompanyRelations(symbol, {
+      useLlm: opts.useLlm,
+      force: opts.force,
+      limit: 30,
+    });
+    this.enterpriseGraphView?.setExtracting(false);
+    if (!result) {
+      this.enterpriseGraphView?.showError(t('components.enterpriseGraph.extractFailed'));
+      return;
+    }
+    await this.loadEnterpriseGraph(symbol, this.selectedCompanyMarket ?? undefined);
   }
 
   private setupRegionSync(): void {
@@ -841,7 +863,7 @@ export class PanelLayoutManager implements AppModule {
       const liveWebcamsPanel = new LiveWebcamsPanel();
       this.ctx.panels['live-webcams'] = liveWebcamsPanel;
 
-      this.ctx.panels['events'] = new TechEventsPanel('events', () => this.ctx.allNews);
+      this.ctx.panels['events'] = new TechEventsPanel('events');
 
       const serviceStatusPanel = new ServiceStatusPanel();
       this.ctx.panels['service-status'] = serviceStatusPanel;
@@ -855,7 +877,7 @@ export class PanelLayoutManager implements AppModule {
     }
 
     if (this.ctx.isDesktopApp) {
-      const runtimeConfigPanel = new RuntimeConfigPanel({ mode: 'alert' });
+      const runtimeConfigPanel = new RuntimeConfigPanel();
       this.ctx.panels['runtime-config'] = runtimeConfigPanel;
     }
 

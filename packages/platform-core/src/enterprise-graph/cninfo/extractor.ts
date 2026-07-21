@@ -3,6 +3,16 @@ import type { FirecrawlScrapeResult } from './firecrawl.js';
 import type { ResolvedEngine } from '../../engines-repository.js';
 import { firecrawlScrapeUrl } from './firecrawl.js';
 
+declare const process: {
+  stdout: { write: (...args: unknown[]) => unknown };
+  stderr: { write: (...args: unknown[]) => unknown };
+};
+declare const console: {
+  log: (...args: unknown[]) => void;
+  warn: (...args: unknown[]) => void;
+  error: (...args: unknown[]) => void;
+};
+
 export interface ExtractResult {
   plainText: string;
   markdown?: string;
@@ -63,19 +73,26 @@ export async function extractDisclosureText(opts: {
 function isPdfJsParseNoise(message: string): boolean {
   return (
     /Warning:\s*TT:/i.test(message)
+    || /Warning:\s*FormatError:/i.test(message)
     || /^TT:/i.test(message)
     || /FormatError:/i.test(message)
-    || /Required "loca" table/i.test(message)
-    || /undefined function:/i.test(message)
+    || /Required ["']loca["'] table/i.test(message)
+    || /undefined function:\s*\d+/i.test(message)
+    || /getPathGenerator/i.test(message)
   );
 }
 
 function silencePdfJsConsole<T>(fn: () => Promise<T>): Promise<T> {
+  const prevLog = console.log;
   const prevWarn = console.warn;
   const prevError = console.error;
   const filter = (...args: unknown[]): boolean => {
-    const msg = args.map((a) => String(a)).join(' ');
+    const msg = args.map((a) => (a instanceof Error ? a.message : String(a))).join(' ');
     return !isPdfJsParseNoise(msg);
+  };
+  // pdf.js emits font noise via console.log('Warning: …'), not warn/error.
+  console.log = (...args: unknown[]) => {
+    if (filter(...args)) prevLog.apply(console, args);
   };
   console.warn = (...args: unknown[]) => {
     if (filter(...args)) prevWarn.apply(console, args);
@@ -84,20 +101,32 @@ function silencePdfJsConsole<T>(fn: () => Promise<T>): Promise<T> {
     if (filter(...args)) prevError.apply(console, args);
   };
 
-  const stderr = process.stderr;
-  const prevStderrWrite = stderr.write.bind(stderr);
-  stderr.write = ((chunk: string | Uint8Array, ...rest: unknown[]) => {
-    const text = typeof chunk === 'string' ? chunk : Buffer.from(chunk).toString('utf8');
-    if (isPdfJsParseNoise(text)) {
-      return true;
-    }
-    return (prevStderrWrite as (...a: unknown[]) => boolean)(chunk, ...rest);
-  }) as typeof stderr.write;
+  const patchStream = (stream: { write: (...args: unknown[]) => unknown }) => {
+    const prevWrite = stream.write.bind(stream);
+    stream.write = (chunk: unknown, ...rest: unknown[]) => {
+      const text =
+        typeof chunk === 'string'
+          ? chunk
+          : Buffer.isBuffer(chunk)
+            ? chunk.toString('utf8')
+            : chunk instanceof Uint8Array
+              ? Buffer.from(chunk).toString('utf8')
+              : String(chunk);
+      if (isPdfJsParseNoise(text)) return true;
+      return prevWrite(chunk, ...rest);
+    };
+    return prevWrite;
+  };
+
+  const prevStdoutWrite = patchStream(process.stdout);
+  const prevStderrWrite = patchStream(process.stderr);
 
   return fn().finally(() => {
+    console.log = prevLog;
     console.warn = prevWarn;
     console.error = prevError;
-    stderr.write = prevStderrWrite;
+    process.stdout.write = prevStdoutWrite;
+    process.stderr.write = prevStderrWrite;
   });
 }
 

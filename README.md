@@ -1605,11 +1605,17 @@ Set `WS_RELAY_URL` (server-side, HTTPS) and `VITE_WS_RELAY_URL` (client-side, WS
 
 ## Self-Hosted Platform (Monorepo)
 
-自托管 **Platform 数据层**（PostgreSQL 新闻 digest、订阅、Job 调度等）已拆为 **npm workspaces** 独立子工程。架构与目录说明见：
+自托管 **Platform 数据层**（PostgreSQL 新闻 digest、订阅、Job 调度等）已拆为 **npm workspaces** 独立子工程。中文设计文档入口：
 
-- [docs/Platform-Monorepo拆分说明.md](./docs/Platform-Monorepo拆分说明.md)（中文，本次拆分完整说明）
-- [docs/MONOREPO.md](./docs/MONOREPO.md)（速查）
+- [docs/README.md](./docs/README.md)（文档索引）
+- [docs/文档说明清单.md](./docs/文档说明清单.md)（每个文档的用途）
+- [docs/系统目标与架构.md](./docs/系统目标与架构.md)（目标、架构、分层）
+- [docs/数据源说明.md](./docs/数据源说明.md)（全部数据源）
+- [docs/功能清单.md](./docs/功能清单.md)（已实现 / 未实现）
+- [docs/Platform-Monorepo拆分说明.md](./docs/Platform-Monorepo拆分说明.md) · [docs/MONOREPO.md](./docs/MONOREPO.md)（workspaces 细节）
 - [deploy/README.md](./deploy/README.md)（环境配置与快速开始）
+
+> **说明：** 本仓库当前交付形态为 **B/S**（浏览器 + Platform 服务）。根 README 中上游遗留的 Tauri / 桌面打包叙述不再作为本 fork 的支持范围。
 
 ### 前置条件
 
@@ -1715,9 +1721,8 @@ npm run desktop:package:macos:full:sign
 npm run desktop:package:windows:full:sign
 ```
 
-Desktop release details, signing hooks, variant outputs, and clean-machine validation checklist:
-
-- [docs/RELEASE_PACKAGING.md](./docs/RELEASE_PACKAGING.md)
+Desktop packaging scripts may still exist in `package.json` / `src-tauri` as upstream leftovers.
+**This fork supports B/S only** — do not use desktop packaging docs (removed). See [docs/文档说明清单.md](./docs/文档说明清单.md).
 
 
 ---

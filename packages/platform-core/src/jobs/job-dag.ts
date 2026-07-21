@@ -6,8 +6,12 @@ import { getJobCheckpoint, getJobCheckpointTime } from './job-checkpoint.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
-/** Upstream handlers that must both succeed before knowledge-graph-build (DAG). */
+/** Upstream handlers that can feed knowledge-graph-build (DAG).
+ *  stock-news + earnings must both succeed; disclosure-ingest-cn also qualifies alone
+ *  (CNINFO already upserts company↔filing edges inline — DAG rebuild refreshes news mentions).
+ */
 export const KG_DAG_UPSTREAM = ['stock-news-ingest', 'earnings-ingest'] as const;
+export const KG_DAG_OPTIONAL_SOLO = ['disclosure-ingest-cn'] as const;
 export const KG_DAG_DOWNSTREAM = 'knowledge-graph-build';
 
 export function isKgDagEnabled(): boolean {
@@ -120,8 +124,34 @@ export async function maybeEnqueueKnowledgeGraphBuild(opts: {
   runId: string;
   handlerKey: string;
 }): Promise<{ enqueued: boolean; reason?: string; runId?: string }> {
-  if (!KG_DAG_UPSTREAM.includes(opts.handlerKey as (typeof KG_DAG_UPSTREAM)[number])) {
+  const isPairUpstream = KG_DAG_UPSTREAM.includes(
+    opts.handlerKey as (typeof KG_DAG_UPSTREAM)[number],
+  );
+  const isSoloUpstream = KG_DAG_OPTIONAL_SOLO.includes(
+    opts.handlerKey as (typeof KG_DAG_OPTIONAL_SOLO)[number],
+  );
+  if (!isPairUpstream && !isSoloUpstream) {
     return { enqueued: false, reason: 'not an upstream handler' };
+  }
+
+  if (isSoloUpstream) {
+    if (!isKgDagEnabled()) {
+      return { enqueued: false, reason: 'PLATFORM_KG_DAG_ENABLED=false' };
+    }
+    const active = await countActiveJobRuns(KG_DAG_DOWNSTREAM);
+    if (active > 0) {
+      return { enqueued: false, reason: 'knowledge-graph-build already pending or running' };
+    }
+    const run = await enqueueManualJobRun({
+      handlerKey: KG_DAG_DOWNSTREAM,
+      payload: {
+        dag: true,
+        triggeredByRunId: opts.runId,
+        triggeredByHandler: opts.handlerKey,
+        lookbackHours: 72,
+      },
+    });
+    return { enqueued: true, runId: run.id };
   }
 
   const status = await evaluateKgDag();

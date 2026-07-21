@@ -15,7 +15,7 @@ Sentry.init({
   environment: location.hostname === 'worldmonitor.app' ? 'production'
     : location.hostname.includes('vercel.app') ? 'preview'
     : 'development',
-  enabled: Boolean(sentryDsn) && !location.hostname.startsWith('localhost') && !('__TAURI_INTERNALS__' in window),
+  enabled: Boolean(sentryDsn) && !location.hostname.startsWith('localhost'),
   sendDefaultPii: true,
   tracesSampleRate: 0.1,
   ignoreErrors: [
@@ -178,8 +178,7 @@ window.addEventListener('unhandledrejection', (e) => {
 
 import { debugGetCells, getCellCount } from '@/services/geo-convergence';
 import { initMetaTags } from '@/services/meta-tags';
-import { installRuntimeFetchPatch, installWebApiRedirect } from '@/services/runtime';
-import { loadDesktopSecrets } from '@/services/runtime-config';
+import { installWebApiRedirect } from '@/services/runtime';
 import { applyStoredTheme } from '@/utils/theme-manager';
 import { SITE_VARIANT } from '@/config/variant';
 import { clearChunkReloadGuard, installChunkReloadGuard } from '@/bootstrap/chunk-reload';
@@ -193,11 +192,8 @@ inject();
 // Initialize dynamic meta tags for sharing
 initMetaTags();
 
-// In desktop mode, route /api/* calls to the local Tauri sidecar backend.
-installRuntimeFetchPatch();
 // In web production, route RPC calls through api.worldmonitor.app (Cloudflare edge).
 installWebApiRedirect();
-loadDesktopSecrets().catch(() => {});
 
 // Apply stored theme preference before app initialization (safety net for inline script)
 applyStoredTheme();
@@ -263,17 +259,7 @@ Object.defineProperty(window, 'beta', {
   },
 });
 
-// Suppress native WKWebView context menu in Tauri — allows custom JS context menus
-if ('__TAURI_INTERNALS__' in window || '__TAURI__' in window) {
-  document.addEventListener('contextmenu', (e) => {
-    const target = e.target as HTMLElement;
-    // Allow native menu on text inputs/textareas for copy/paste
-    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) return;
-    e.preventDefault();
-  });
-}
-
-if (!('__TAURI_INTERNALS__' in window) && !('__TAURI__' in window) && 'serviceWorker' in navigator) {
+if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js', { scope: '/' })
     .then((registration) => {
       console.log('[PWA] Service worker registered');

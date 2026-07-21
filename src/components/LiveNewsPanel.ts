@@ -1,6 +1,6 @@
 import { Panel } from './Panel';
 import { fetchLiveVideoInfo } from '@/services/live-news';
-import { isDesktopRuntime, getRemoteApiBaseUrl, getApiBaseUrl, getLocalApiPort } from '@/services/runtime';
+import { getRemoteApiBaseUrl, getApiBaseUrl } from '@/services/runtime';
 import { t } from '../services/i18n';
 import { loadFromStorage, saveToStorage } from '@/utils';
 import { STORAGE_KEYS, SITE_VARIANT } from '@/config';
@@ -204,11 +204,6 @@ const DIRECT_HLS_MAP: Readonly<Record<string, string>> = {
   'fox-news': 'https://247preview.foxnews.com/hls/live/2020027/fncv3preview/primary.m3u8',
 };
 
-interface ProxiedHlsEntry { url: string; referer: string; }
-const PROXIED_HLS_MAP: Readonly<Record<string, ProxiedHlsEntry>> = {
-  'cnbc': { url: 'https://cdn-ca2-na.lncnetworks.host/hls/cnbc_live/index.m3u8', referer: 'https://livenewschat.eu/' },
-};
-
 if (import.meta.env.DEV) {
   const allChannels = [...FULL_LIVE_CHANNELS, ...TECH_LIVE_CHANNELS, ...OPTIONAL_LIVE_CHANNELS];
   for (const id of Object.keys(DIRECT_HLS_MAP)) {
@@ -290,7 +285,7 @@ export class LiveNewsPanel extends Panel {
 
   // Desktop: always use sidecar embed for YouTube (tauri:// origin gets 153).
   // DIRECT_HLS_MAP channels use native <video> instead.
-  private useDesktopEmbedProxy = isDesktopRuntime();
+  private useDesktopEmbedProxy = false;
   private desktopEmbedIframe: HTMLIFrameElement | null = null;
   private desktopEmbedRenderToken = 0;
   private suppressChannelClick = false;
@@ -398,17 +393,11 @@ export class LiveNewsPanel extends Panel {
     return url;
   }
 
-  private getProxiedHlsUrl(channelId: string): string | undefined {
-    if (!isDesktopRuntime()) return undefined;
-    const entry = PROXIED_HLS_MAP[channelId];
-    if (!entry) return undefined;
-    const failedAt = this.hlsFailureCooldown.get(channelId);
-    if (failedAt && Date.now() - failedAt < this.HLS_COOLDOWN_MS) return undefined;
-    return `http://127.0.0.1:${getLocalApiPort()}/api/hls-proxy?url=${encodeURIComponent(entry.url)}`;
+  private getProxiedHlsUrl(_channelId: string): string | undefined {
+    return undefined;
   }
 
   private get embedOrigin(): string {
-    if (isDesktopRuntime()) return `http://localhost:${getLocalApiPort()}`;
     try { return new URL(getRemoteApiBaseUrl()).origin; } catch { return 'https://worldmonitor.app'; }
   }
 
@@ -451,17 +440,9 @@ export class LiveNewsPanel extends Panel {
       : 'https://worldmonitor.app';
 
     try {
-      const { protocol, origin, host } = window.location;
+      const { protocol, origin } = window.location;
       if (protocol === 'http:' || protocol === 'https:') {
-        // Desktop webviews commonly run from tauri.localhost which can trigger
-        // YouTube embed restrictions. Use canonical public origin instead.
-        if (host === 'tauri.localhost' || host.endsWith('.tauri.localhost')) {
-          return fallbackOrigin;
-        }
         return origin;
-      }
-      if (protocol === 'tauri:' || protocol === 'asset:') {
-        return fallbackOrigin;
       }
     } catch {
       // Ignore invalid location values.
@@ -1005,7 +986,7 @@ export class LiveNewsPanel extends Panel {
       mute: this.isMuted ? '1' : '0',
     });
     if (quality !== 'auto') params.set('vq', quality);
-    const embedUrl = `http://localhost:${getLocalApiPort()}/api/youtube-embed?${params.toString()}`;
+    const embedUrl = `https://www.youtube-nocookie.com/embed/${videoId}?${params.toString()}`;
 
     if (renderToken !== this.desktopEmbedRenderToken) {
       return;
@@ -1233,15 +1214,6 @@ export class LiveNewsPanel extends Panel {
             return;
           }
 
-          // Desktop-specific last resort: switch to cloud bridge embed.
-          if (errorCode === 153 && isDesktopRuntime()) {
-            this.useDesktopEmbedProxy = true;
-            this.destroyPlayer();
-            this.ensurePlayerContainer();
-            this.renderDesktopEmbed(true);
-            return;
-          }
-
           this.destroyPlayer();
           this.showEmbedError(this.activeChannel, errorCode);
         },
@@ -1322,16 +1294,7 @@ export class LiveNewsPanel extends Panel {
 
   private async openYouTubeSignIn(): Promise<void> {
     const youtubeLoginUrl = 'https://accounts.google.com/ServiceLogin?service=youtube&continue=https://www.youtube.com/';
-    if (isDesktopRuntime()) {
-      try {
-        const { tryInvokeTauri } = await import('@/services/tauri-bridge');
-        await tryInvokeTauri('open_youtube_login');
-      } catch {
-        window.open(youtubeLoginUrl, '_blank');
-      }
-    } else {
-      window.open(youtubeLoginUrl, '_blank');
-    }
+    window.open(youtubeLoginUrl, '_blank', 'noopener,noreferrer');
   }
 
   private syncPlayerState(): void {

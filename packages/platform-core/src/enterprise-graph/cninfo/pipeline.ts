@@ -7,6 +7,7 @@ import {
   findDisclosureDocumentByUrlOrChecksum,
   findFilingBySourceDoc,
   findListedSecurityBySymbol,
+  getDisclosureTextPlain,
   getFilingById,
   hasDisclosureText,
   insertDisclosureDocument,
@@ -14,8 +15,11 @@ import {
   insertDisclosureText,
   listFailedFilingsForRecollect,
   listCninfoFilingsInRange,
+  listFilingsWithDisclosureText,
+  filingHasExtractedRelations,
   updateFilingParseStatus,
   upsertKgCompanyFromSecurity,
+  upsertKgExtractedRelations,
   upsertKgFilingAndEdge,
 } from '../listed-companies-repository.js';
 import {
@@ -28,6 +32,7 @@ import {
 import { downloadAdjunctPdf } from './downloader.js';
 import { extractDisclosureText } from './extractor.js';
 import { upsertMasterFromAnnouncement } from './master-data.js';
+import { extractDisclosureRelationsHybrid } from './relation-extract-llm.js';
 
 declare const process: { env: Record<string, string | undefined> };
 
@@ -51,6 +56,7 @@ export interface CninfoPipelineStats {
   extracted: number;
   failed: number;
   forced: number;
+  relationsExtracted: number;
   entitiesUpserted: number;
   edgesUpserted: number;
   lastAnnTime?: string;
@@ -144,6 +150,7 @@ export async function runCninfoDisclosurePipeline(
     extracted: 0,
     failed: 0,
     forced: payload.force || Boolean(payload.recollect) ? 1 : 0,
+    relationsExtracted: 0,
     entitiesUpserted: 0,
     edgesUpserted: 0,
   };
@@ -300,7 +307,12 @@ async function reprocessFailedFilings(
   payload: PipelinePayload,
   stats: CninfoPipelineStats,
 ): Promise<void> {
-  const rows = await listFailedFilingsForRecollect(payload.recollect!, MAX_RETRY, config.workspaceId);
+  const rows = await listFailedFilingsForRecollect(
+    payload.recollect!,
+    MAX_RETRY,
+    config.workspaceId,
+    payload.symbols,
+  );
   for (const row of rows) {
     const filing = await getFilingById(row.id, config.workspaceId);
     if (!filing?.source_doc_id) continue;
@@ -457,8 +469,48 @@ async function processFilingDownloadExtract(opts: {
   await upsertKgForFiling(filingId, ann, config, stats);
 }
 
+async function extractAndUpsertRelations(opts: {
+  filingId: string;
+  ann: CninfoAnnouncement;
+  plainText: string;
+  config: CninfoPipelineConfig;
+  stats: CninfoPipelineStats;
+  useLlm?: boolean;
+  force?: boolean;
+}): Promise<void> {
+  const { filingId, ann, plainText, config, stats } = opts;
+  if (!opts.force && (await filingHasExtractedRelations(filingId, config.workspaceId))) {
+    return;
+  }
+
+  const { relations } = await extractDisclosureRelationsHybrid({
+    plainText,
+    companyName: ann.secName,
+    useLlm: opts.useLlm === true,
+  });
+  if (!relations.length) return;
+
+  const sym = ann.secCode ? ann.secCode.replace(/\D/g, '').padStart(6, '0') : null;
+  if (!sym) return;
+  const security = await findListedSecurityBySymbol(sym, 'cn', config.workspaceId);
+  if (!security) return;
+
+  const companyEntityId = await upsertKgCompanyFromSecurity(security, config.workspaceId);
+  const result = await upsertKgExtractedRelations({
+    companyEntityId,
+    filingId,
+    sourceDocId: ann.announcementId,
+    market: 'cn',
+    relations,
+    workspaceId: config.workspaceId,
+  });
+  stats.relationsExtracted += relations.length;
+  stats.entitiesUpserted += result.entitiesUpserted;
+  stats.edgesUpserted += result.edgesUpserted;
+}
+
 async function upsertKgForFiling(
-  _filingId: string,
+  filingId: string,
   ann: CninfoAnnouncement,
   config: CninfoPipelineConfig,
   stats: CninfoPipelineStats,
@@ -484,4 +536,83 @@ async function upsertKgForFiling(
     config.workspaceId,
   );
   stats.edgesUpserted += 1;
+
+  // When text already exists (skip re-download path), still try relation extract once.
+  const plain = await getDisclosureTextPlain(filingId, config.workspaceId);
+  if (plain) {
+    await extractAndUpsertRelations({
+      filingId,
+      ann,
+      plainText: plain,
+      config,
+      stats,
+    });
+  }
+}
+
+/** Batch: extract relations from already-stored disclosure texts (no re-download). */
+export async function runDisclosureRelationExtractBatch(opts: {
+  workspaceId: string;
+  symbols?: string[];
+  limit?: number;
+  useLlm?: boolean;
+  force?: boolean;
+  signal?: AbortSignal;
+}): Promise<{
+  status: 'ok';
+  scanned: number;
+  skipped: number;
+  relationsExtracted: number;
+  entitiesUpserted: number;
+  edgesUpserted: number;
+  method: 'rule' | 'rule+llm';
+}> {
+  const rows = await listFilingsWithDisclosureText({
+    limit: opts.limit ?? 100,
+    symbols: opts.symbols,
+    workspaceId: opts.workspaceId,
+    skipAlreadyExtracted: opts.force !== true,
+  });
+
+  let relationsExtracted = 0;
+  let entitiesUpserted = 0;
+  let edgesUpserted = 0;
+  let method: 'rule' | 'rule+llm' = 'rule';
+
+  for (const row of rows) {
+    if (opts.signal?.aborted) break;
+
+    const hybrid = await extractDisclosureRelationsHybrid({
+      plainText: row.contentPlain,
+      companyName: row.title ?? row.symbol,
+      useLlm: opts.useLlm === true,
+    });
+    if (hybrid.method === 'rule+llm') method = 'rule+llm';
+    if (!hybrid.relations.length) continue;
+
+    const security = await findListedSecurityBySymbol(row.symbol, 'cn', opts.workspaceId);
+    if (!security) continue;
+    const companyEntityId = await upsertKgCompanyFromSecurity(security, opts.workspaceId);
+    const result = await upsertKgExtractedRelations({
+      companyEntityId,
+      filingId: row.filingId,
+      sourceDocId: row.sourceDocId,
+      market: 'cn',
+      relations: hybrid.relations,
+      workspaceId: opts.workspaceId,
+    });
+    relationsExtracted += hybrid.relations.length;
+    entitiesUpserted += result.entitiesUpserted;
+    edgesUpserted += result.edgesUpserted;
+  }
+
+  return {
+    status: 'ok',
+    scanned: rows.length,
+    skipped: 0,
+    relationsExtracted,
+    entitiesUpserted,
+    edgesUpserted,
+    method,
+  };
 }

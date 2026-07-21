@@ -23,7 +23,6 @@ import type { ETFFlowsPanel } from '@/components/ETFFlowsPanel';
 import type { MacroSignalsPanel } from '@/components/MacroSignalsPanel';
 import type { StrategicPosturePanel } from '@/components/StrategicPosturePanel';
 import type { StrategicRiskPanel } from '@/components/StrategicRiskPanel';
-import { isDesktopRuntime } from '@/services/runtime';
 import { BETA_MODE } from '@/config/beta';
 import { trackEvent, trackDeeplinkOpened } from '@/services/analytics';
 import { preloadCountryGeometry, getCountryNameByCode } from '@/services/country-geometry';
@@ -31,7 +30,6 @@ import { initI18n } from '@/services/i18n';
 
 import { computeDefaultDisabledSources, getLocaleBoostedSources, getTotalFeedCount } from '@/config/feeds';
 import { fetchBootstrapData } from '@/services/bootstrap';
-import { DesktopUpdater } from '@/app/desktop-updater';
 import { CountryIntelManager } from '@/app/country-intel';
 import { SearchManager } from '@/app/search-manager';
 import { RefreshScheduler } from '@/app/refresh-scheduler';
@@ -54,7 +52,6 @@ export class App {
   private searchManager: SearchManager;
   private countryIntel: CountryIntelManager;
   private refreshScheduler: RefreshScheduler;
-  private desktopUpdater: DesktopUpdater;
 
   private modules: { destroy(): void }[] = [];
   private unsubAiFlow: (() => void) | null = null;
@@ -67,7 +64,6 @@ export class App {
     const PANEL_SPANS_KEY = 'worldmonitor-panel-spans';
 
     const isMobile = isMobileDevice();
-    const isDesktopApp = isDesktopRuntime();
     const monitors = loadFromStorage<Monitor[]>(STORAGE_KEYS.monitors, []);
 
     // Use mobile-specific defaults on first load (no saved layers)
@@ -168,18 +164,6 @@ export class App {
       localStorage.setItem(LAYOUT_RESET_MIGRATION_KEY, 'done');
     }
 
-    // Desktop key management panel must always remain accessible in Tauri.
-    if (isDesktopApp) {
-      const runtimePanel = panelSettings['runtime-config'] ?? {
-        name: 'Desktop Configuration',
-        enabled: true,
-        priority: 2,
-      };
-      runtimePanel.enabled = true;
-      panelSettings['runtime-config'] = runtimePanel;
-      saveToStorage(STORAGE_KEYS.panels, panelSettings);
-    }
-
     let initialUrlState: ParsedMapUrlState | null = parseMapUrlState(window.location.search, mapLayers);
     if (initialUrlState.layers) {
       if (currentVariant === 'tech') {
@@ -233,7 +217,7 @@ export class App {
     this.state = {
       map: null,
       isMobile,
-      isDesktopApp,
+      isDesktopApp: false,
       container: el,
       panels: {},
       newsPanels: {},
@@ -287,7 +271,6 @@ export class App {
     // Instantiate modules (callbacks wired after all modules exist)
     this.refreshScheduler = new RefreshScheduler(this.state);
     this.countryIntel = new CountryIntelManager(this.state);
-    this.desktopUpdater = new DesktopUpdater(this.state);
 
     this.dataLoader = new DataLoaderManager(this.state, {
       renderCriticalBanner: (postures) => this.panelLayout.renderCriticalBanner(postures),
@@ -319,7 +302,6 @@ export class App {
 
     // Track destroy order (reverse of init)
     this.modules = [
-      this.desktopUpdater,
       this.panelLayout,
       this.countryIntel,
       this.searchManager,
@@ -334,7 +316,7 @@ export class App {
     await initDB();
     await initI18n();
     const aiFlow = getAiFlowSettings();
-    if (aiFlow.browserModel || isDesktopRuntime()) {
+    if (aiFlow.browserModel) {
       await mlWorker.init();
       if (BETA_MODE) mlWorker.loadModel('summarization-beta').catch(() => {});
     }
@@ -362,7 +344,7 @@ export class App {
         } else {
           mlWorker.unloadModel('embeddings').catch(() => {});
           const s = getAiFlowSettings();
-          if (!s.browserModel && !isDesktopRuntime()) {
+          if (!s.browserModel) {
             mlWorker.terminate();
           }
         }
@@ -459,9 +441,8 @@ export class App {
     this.eventHandlers.setupSnapshotSaving();
     cleanOldSnapshots().catch((e) => console.warn('[Storage] Snapshot cleanup failed:', e));
 
-    // Phase 8: Deep links + update checks
+    // Phase 8: Deep links
     this.handleDeepLinks();
-    this.desktopUpdater.init();
 
     // Analytics
     trackEvent('wm_app_loaded', {

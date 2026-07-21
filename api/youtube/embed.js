@@ -16,20 +16,17 @@ const ALLOWED_ORIGINS = [
   /^https:\/\/worldmonitor-[a-z0-9-]+\.vercel\.app$/,
   /^https?:\/\/localhost(:\d+)?$/,
   /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
-  /^tauri:\/\/localhost$/,
 ];
 
 const ALLOWED_PARENT_ORIGINS = [
   ...ALLOWED_ORIGINS,
-  /^https?:\/\/tauri\.localhost$/,
-  /^https?:\/\/[a-z0-9-]+\.tauri\.localhost$/,
 ];
 
 function sanitizeAllowedOrigin(raw, fallback, allowList = ALLOWED_ORIGINS) {
   if (!raw) return fallback;
   try {
     const parsed = new URL(raw);
-    if (!['https:', 'http:', 'tauri:'].includes(parsed.protocol)) {
+    if (!['https:', 'http:'].includes(parsed.protocol)) {
       return fallback;
     }
     const origin = parsed.origin !== 'null' ? parsed.origin : raw;

@@ -1,7 +1,7 @@
 # Platform 消费端 / 生产端拆分设计
 
-> **状态：** 实施中（Phase 1：Job 调度器基础已落地）  
-> **关联：** [Platform后台启动与运行设计.md](./Platform后台启动与运行设计.md) · [deploy/README.md](../deploy/README.md)
+> **状态：** Job 调度器已落地；总览见 [系统目标与架构.md](./系统目标与架构.md)，进度见 [功能清单.md](./功能清单.md)  
+> **关联：** [Platform后台启动与运行设计.md](./Platform后台启动与运行设计.md) · [deploy/README.md](../deploy/README.md) · [文档索引](./README.md)
 
 ---
 
@@ -11,7 +11,7 @@
 
 | 子系统 | 职责 | HTTP |
 |--------|------|------|
-| **消费端 Consumer** | 前端 SPA、`/api/*` sebuf 网关、`/platform/*` Platform API、桌面 Sidecar | **提供** |
+| **消费端 Consumer** | 前端 SPA、`/api/*` sebuf 网关、`/platform/*` Platform API | **提供** |
 | **生产端 Producer** | RSS/股票/财报采集、向量化、订阅投递、知识图谱构建、冷归档等 | **不提供** |
 
 集成点：**PostgreSQL**（主）、**Redis**（可选队列）、**OSS**（冷数据/大文件）。

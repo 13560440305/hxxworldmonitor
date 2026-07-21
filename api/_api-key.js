@@ -1,10 +1,3 @@
-const DESKTOP_ORIGIN_PATTERNS = [
-  /^https?:\/\/tauri\.localhost(:\d+)?$/,
-  /^https?:\/\/[a-z0-9-]+\.tauri\.localhost(:\d+)?$/i,
-  /^tauri:\/\/localhost$/,
-  /^asset:\/\/localhost$/,
-];
-
 const BROWSER_ORIGIN_PATTERNS = [
   /^https:\/\/(.*\.)?worldmonitor\.app$/,
   /^https:\/\/worldmonitor-[a-z0-9-]+\.vercel\.app$/,
@@ -13,10 +6,6 @@ const BROWSER_ORIGIN_PATTERNS = [
     /^https?:\/\/127\.0\.0\.1(:\d+)?$/,
   ]),
 ];
-
-function isDesktopOrigin(origin) {
-  return Boolean(origin) && DESKTOP_ORIGIN_PATTERNS.some(p => p.test(origin));
-}
 
 function isTrustedBrowserOrigin(origin) {
   return Boolean(origin) && BROWSER_ORIGIN_PATTERNS.some(p => p.test(origin));
@@ -36,14 +25,6 @@ export function validateApiKey(req) {
   // Same-origin browser requests don't send Origin (per CORS spec).
   // Fall back to Referer to identify trusted same-origin callers.
   const origin = req.headers.get('Origin') || extractOriginFromReferer(req.headers.get('Referer')) || '';
-
-  // Desktop app — always require API key
-  if (isDesktopOrigin(origin)) {
-    if (!key) return { valid: false, required: true, error: 'API key required for desktop access' };
-    const validKeys = (process.env.WORLDMONITOR_VALID_KEYS || '').split(',').filter(Boolean);
-    if (!validKeys.includes(key)) return { valid: false, required: true, error: 'Invalid API key' };
-    return { valid: true, required: true };
-  }
 
   // Trusted browser origin (worldmonitor.app, Vercel previews, localhost dev) — no key needed
   if (isTrustedBrowserOrigin(origin)) {

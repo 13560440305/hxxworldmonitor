@@ -35,10 +35,10 @@ test('accepts custom origin parameter', async () => {
 });
 
 test('uses dedicated parentOrigin for iframe postMessage target', async () => {
-  const response = await handler(makeRequest('?videoId=iEpJwprxDdk&origin=https://worldmonitor.app&parentOrigin=https://tauri.localhost'));
+  const response = await handler(makeRequest('?videoId=iEpJwprxDdk&origin=https://worldmonitor.app&parentOrigin=http://localhost:5173'));
   const html = await response.text();
   assert.match(html, /playerVars:\{[^}]*origin:"https:\/\/worldmonitor\.app"/);
-  assert.match(html, /parentOrigin="https:\/\/tauri\.localhost"/);
+  assert.match(html, /parentOrigin="http:\/\/localhost:5173"/);
   assert.match(html, /if\(allowedOrigin!==['"]\*['"]&&e\.origin!==allowedOrigin\)return/);
 });
 

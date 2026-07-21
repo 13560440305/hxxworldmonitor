@@ -144,6 +144,18 @@ export const DEFAULT_JOB_DEFINITIONS: JobDefinitionSeed[] = [
     timeoutSec: 14400,
     payload: { market: 'cn', source: 'cninfo' },
   },
+  {
+    handlerKey: 'disclosure-relation-extract',
+    displayName: 'Disclosure relation extract (rule)',
+    tier: 'heavy',
+    scheduleKind: 'cron',
+    cronExpr: '30 8 * * 1-5',
+    timezone: 'Asia/Shanghai',
+    enabled: false,
+    maxConcurrency: 1,
+    timeoutSec: 3600,
+    payload: { limit: 100 },
+  },
 ];
 
 /** Ensure every registered handler has a job_definitions row (idempotent). */

@@ -98,6 +98,8 @@ function entityToNode(row: {
     symbol = parts[parts.length - 1] ?? row.external_key;
   } else if (entityType === 'filing') {
     symbol = row.name.slice(0, 16) || 'filing';
+  } else if (entityType === 'org') {
+    symbol = row.name.slice(0, 10) || 'org';
   }
   return {
     id: row.external_key,

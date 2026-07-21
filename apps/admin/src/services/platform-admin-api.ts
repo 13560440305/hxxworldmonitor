@@ -300,6 +300,59 @@ export interface IntegrationProviderRow {
   sortOrder: number;
   custom: boolean;
   remarks: string;
+  ingestEngineSlug: string | null;
+  ingestPluginKey: string | null;
+  ingestPluginDisplayName: string | null;
+}
+
+export interface EngineRow {
+  slug: string;
+  displayName: string;
+  engineType: string;
+  baseUrl: string;
+  enabled: boolean;
+  hasApiKey: boolean;
+  apiKeyHint: string | null;
+  configured: boolean;
+  sortOrder: number;
+  custom: boolean;
+  remarks: string;
+}
+
+export async function fetchEngines(): Promise<EngineRow[]> {
+  const data = await parseJson<{ engines: EngineRow[] }>(
+    await adminFetch('/v1/admin/engines'),
+  );
+  return data.engines;
+}
+
+export async function saveEngine(
+  slug: string,
+  patch: {
+    displayName?: string;
+    engineType?: string;
+    baseUrl?: string;
+    apiKey?: string;
+    enabled?: boolean;
+    clearApiKey?: boolean;
+    remarks?: string;
+  },
+): Promise<EngineRow> {
+  const body: Record<string, unknown> = {};
+  if (patch.displayName !== undefined) body.displayName = patch.displayName;
+  if (patch.engineType !== undefined) body.engineType = patch.engineType;
+  if (patch.baseUrl !== undefined) body.baseUrl = patch.baseUrl;
+  if (patch.apiKey !== undefined) body.apiKey = patch.apiKey;
+  if (patch.enabled !== undefined) body.enabled = patch.enabled;
+  if (patch.clearApiKey) body.clearApiKey = true;
+  if (patch.remarks !== undefined) body.remarks = patch.remarks;
+  const data = await parseJson<{ engine: EngineRow }>(
+    await adminFetch(`/v1/admin/engines/${slug}`, {
+      method: 'PATCH',
+      body: JSON.stringify(body),
+    }),
+  );
+  return data.engine;
 }
 
 export async function testIntegrationProvider(
@@ -340,6 +393,7 @@ export async function saveIntegrationProvider(
     enabled?: boolean;
     clearApiKey?: boolean;
     remarks?: string;
+    ingestEngineSlug?: string | null;
   },
 ): Promise<IntegrationProviderRow> {
   const body: Record<string, unknown> = {};
@@ -351,6 +405,7 @@ export async function saveIntegrationProvider(
   if (patch.enabled !== undefined) body.enabled = patch.enabled;
   if (patch.clearApiKey) body.clearApiKey = true;
   if (patch.remarks !== undefined) body.remarks = patch.remarks;
+  if (patch.ingestEngineSlug !== undefined) body.ingestEngineSlug = patch.ingestEngineSlug;
   const data = await parseJson<{ provider: IntegrationProviderRow }>(
     await adminFetch(`/v1/admin/integrations/${slug}`, {
       method: 'PATCH',
@@ -368,6 +423,7 @@ export async function createIntegrationProvider(input: {
   apiKey?: string;
   enabled?: boolean;
   remarks?: string;
+  ingestEngineSlug?: string | null;
 }): Promise<IntegrationProviderRow> {
   const data = await parseJson<{ provider: IntegrationProviderRow }>(
     await adminFetch('/v1/admin/integrations', {
@@ -667,6 +723,20 @@ export interface JobRunRow {
   stats: Record<string, unknown> | null;
 }
 
+export interface HandlerQueueStatus {
+  handlerKey: string;
+  pending: number;
+  running: number;
+  maxConcurrency: number;
+  blocked: boolean;
+  runningRuns: Array<{
+    id: string;
+    startedAt: string | null;
+    lockedUntil: string | null;
+    lockedBy: string | null;
+  }>;
+}
+
 export interface EnqueueJobResult {
   ok: boolean;
   queued?: boolean;
@@ -677,6 +747,7 @@ export interface EnqueueJobResult {
   subscriptions?: number;
   totalMatched?: number;
   processed?: number;
+  queueStatus?: HandlerQueueStatus;
 }
 
 export async function fetchJobHandlers(): Promise<JobHandlerInfo[]> {
@@ -710,6 +781,47 @@ export async function enqueueAdminJob(
       body: JSON.stringify({ handlerKey, payload }),
     }),
   );
+}
+
+export async function fetchJobQueueStatus(
+  handlerKey = 'disclosure-ingest-cn',
+): Promise<HandlerQueueStatus> {
+  const data = await parseJson<{ status: HandlerQueueStatus }>(
+    await adminFetch(`/v1/admin/jobs/queue-status?handlerKey=${encodeURIComponent(handlerKey)}`),
+  );
+  return data.status;
+}
+
+export async function reclaimStaleJobs(lockTtlSec = 300): Promise<{ ok: boolean; reclaimed: number }> {
+  return parseJson(
+    await adminFetch('/v1/admin/jobs/reclaim-stale', {
+      method: 'POST',
+      body: JSON.stringify({ lockTtlSec }),
+    }),
+  );
+}
+
+export interface CninfoDisclosureStats {
+  total: number;
+  byStatus: Record<string, number>;
+  recollectableFailed: number;
+  recollectablePartial: number;
+  maxRetry: number;
+  samples: Array<{
+    id: string;
+    symbol: string;
+    title: string | null;
+    parseStatus: string;
+    retryCount: number;
+    errorMessage: string | null;
+  }>;
+}
+
+export async function fetchDisclosureStats(): Promise<CninfoDisclosureStats> {
+  const data = await parseJson<{ stats: CninfoDisclosureStats }>(
+    await adminFetch('/v1/admin/disclosure/stats'),
+  );
+  return data.stats;
 }
 
 export async function patchJobDefinitionEnabled(

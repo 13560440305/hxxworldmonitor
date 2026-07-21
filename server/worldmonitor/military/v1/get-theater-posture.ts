@@ -80,10 +80,7 @@ function parseOpenSkyStates(
 }
 
 async function fetchMilitaryFlightsFromOpenSky(): Promise<RawFlight[]> {
-  const isSidecar = (process.env.LOCAL_API_MODE || '').includes('sidecar');
-  const baseUrl = isSidecar
-    ? 'https://opensky-network.org/api/states/all'
-    : process.env.WS_RELAY_URL ? process.env.WS_RELAY_URL + '/opensky' : null;
+  const baseUrl = process.env.WS_RELAY_URL ? process.env.WS_RELAY_URL + '/opensky' : null;
 
   if (!baseUrl) return [];
 

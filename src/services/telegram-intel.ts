@@ -1,6 +1,3 @@
-import { proxyUrl } from '@/utils';
-import { isDesktopRuntime } from '@/services/runtime';
-
 export interface TelegramItem {
   id: string;
   source: 'telegram';
@@ -38,8 +35,7 @@ let cachedAt = 0;
 const CACHE_TTL = 30_000;
 
 function telegramFeedUrl(limit: number): string {
-  const path = `/api/telegram-feed?limit=${limit}`;
-  return isDesktopRuntime() ? proxyUrl(path) : path;
+  return `/api/telegram-feed?limit=${limit}`;
 }
 
 export async function fetchTelegramFeed(limit = 50): Promise<TelegramFeedResponse> {

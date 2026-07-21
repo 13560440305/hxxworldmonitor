@@ -2,6 +2,10 @@ import { getDefaultWorkspaceId, query } from '@hxxworldmonitor/shared/db.js';
 import type { EnterpriseGraphCompany, EnterpriseGraphMarketId } from './types.js';
 import { companyExternalKey, getGeoDefaults, inferCnExchange } from './geo.js';
 
+declare const process: { env: Record<string, string | undefined> };
+
+declare const process: { env: Record<string, string | undefined> };
+
 export interface ListedCompanyRow {
   id: string;
   country_code: string;
@@ -303,28 +307,137 @@ export async function listFailedFilingsForRecollect(
   mode: 'failed' | 'partial' | 'all',
   maxRetry: number,
   workspaceId?: string,
-): Promise<Array<{ id: string; source_doc_id: string | null; parse_status: string }>> {
+  symbols?: string[],
+): Promise<Array<{ id: string; source_doc_id: string | null; parse_status: string; symbol?: string }>> {
   const ws = workspaceId ?? getDefaultWorkspaceId();
+  const params: unknown[] = [ws];
+  let symbolFilter = '';
+  if (symbols?.length) {
+    const normalized = symbols.map((s) => {
+      const digits = s.replace(/\D/g, '');
+      return digits.length >= 4 && digits.length <= 6 ? digits.padStart(6, '0') : s.trim();
+    });
+    params.push(normalized);
+    symbolFilter = ` AND symbol = ANY($${params.length}::text[])`;
+  }
+
   if (mode === 'all') {
-    const res = await query<{ id: string; source_doc_id: string | null; parse_status: string }>(
-      `SELECT id, source_doc_id, parse_status FROM company_filings
+    params.push(500);
+    const res = await query<{ id: string; source_doc_id: string | null; parse_status: string; symbol: string }>(
+      `SELECT id, source_doc_id, parse_status, symbol FROM company_filings
        WHERE workspace_id = $1 AND source = 'cninfo' AND source_doc_id IS NOT NULL
-       ORDER BY published_at DESC NULLS LAST LIMIT 500`,
-      [ws],
+         ${symbolFilter}
+       ORDER BY published_at DESC NULLS LAST LIMIT $${params.length}`,
+      params,
     );
     return res.rows;
   }
+
   const statuses = mode === 'partial' ? ['failed', 'partial'] : ['failed'];
-  const res = await query<{ id: string; source_doc_id: string | null; parse_status: string }>(
-    `SELECT id, source_doc_id, parse_status FROM company_filings
+  params.push(statuses);
+  const statusIdx = params.length;
+  params.push(maxRetry);
+  const retryIdx = params.length;
+  params.push(200);
+  const limitIdx = params.length;
+
+  const res = await query<{ id: string; source_doc_id: string | null; parse_status: string; symbol: string }>(
+    `SELECT id, source_doc_id, parse_status, symbol FROM company_filings
+     WHERE workspace_id = $1 AND source = 'cninfo'
+       AND parse_status = ANY($${statusIdx}::text[])
+       AND retry_count < $${retryIdx}
+       ${symbolFilter}
+     ORDER BY ingested_at ASC NULLS LAST
+     LIMIT $${limitIdx}`,
+    params,
+  );
+  return res.rows;
+}
+
+export async function getCninfoDisclosureStats(workspaceId?: string): Promise<{
+  total: number;
+  byStatus: Record<string, number>;
+  recollectableFailed: number;
+  recollectablePartial: number;
+  maxRetry: number;
+  samples: Array<{
+    id: string;
+    symbol: string;
+    title: string | null;
+    parseStatus: string;
+    retryCount: number;
+    errorMessage: string | null;
+  }>;
+}> {
+  const ws = workspaceId ?? getDefaultWorkspaceId();
+  const maxRetry = Number(process.env.CNINFO_MAX_PARSE_RETRY ?? 5);
+
+  const counts = await query<{ parse_status: string; n: string }>(
+    `SELECT parse_status, COUNT(*)::text AS n
+     FROM company_filings
+     WHERE workspace_id = $1 AND source = 'cninfo'
+     GROUP BY parse_status`,
+    [ws],
+  );
+  const byStatus: Record<string, number> = {};
+  let total = 0;
+  for (const row of counts.rows) {
+    const n = Number(row.n);
+    byStatus[row.parse_status] = n;
+    total += n;
+  }
+
+  const recollectable = await query<{ parse_status: string; n: string }>(
+    `SELECT parse_status, COUNT(*)::text AS n
+     FROM company_filings
      WHERE workspace_id = $1 AND source = 'cninfo'
        AND parse_status = ANY($2::text[])
        AND retry_count < $3
-     ORDER BY ingested_at ASC NULLS LAST
-     LIMIT 200`,
-    [ws, statuses, maxRetry],
+     GROUP BY parse_status`,
+    [ws, ['failed', 'partial'], maxRetry],
   );
-  return res.rows;
+  let recollectableFailed = 0;
+  let recollectablePartial = 0;
+  for (const row of recollectable.rows) {
+    const n = Number(row.n);
+    if (row.parse_status === 'failed') recollectableFailed = n;
+    if (row.parse_status === 'partial') recollectablePartial = n;
+  }
+
+  const samples = await query<{
+    id: string;
+    symbol: string;
+    title: string | null;
+    parse_status: string;
+    retry_count: number;
+    error_message: string | null;
+  }>(
+    `SELECT id, symbol, title, parse_status, retry_count, error_message
+     FROM company_filings
+     WHERE workspace_id = $1 AND source = 'cninfo'
+       AND parse_status IN ('failed', 'partial')
+     ORDER BY
+       CASE parse_status WHEN 'failed' THEN 0 ELSE 1 END,
+       ingested_at DESC NULLS LAST
+     LIMIT 15`,
+    [ws],
+  );
+
+  return {
+    total,
+    byStatus,
+    recollectableFailed,
+    recollectablePartial,
+    maxRetry,
+    samples: samples.rows.map((r) => ({
+      id: r.id,
+      symbol: r.symbol,
+      title: r.title,
+      parseStatus: r.parse_status,
+      retryCount: r.retry_count,
+      errorMessage: r.error_message,
+    })),
+  };
 }
 
 export async function listCninfoFilingsInRange(opts: {
@@ -354,6 +467,68 @@ export async function listCninfoFilingsInRange(opts: {
     params,
   );
   return res.rows;
+}
+
+export interface CompanyFilingListItem {
+  id: string;
+  title: string | null;
+  publishedAt: string | null;
+  parseStatus: string;
+  sourceUrl: string | null;
+  sourceDocId: string | null;
+  category: string | null;
+  source: string | null;
+}
+
+export async function listFilingsBySymbol(opts: {
+  symbol: string;
+  market?: string;
+  limit?: number;
+  workspaceId?: string;
+}): Promise<CompanyFilingListItem[]> {
+  const ws = opts.workspaceId ?? getDefaultWorkspaceId();
+  const limit = Math.min(Math.max(opts.limit ?? 30, 1), 100);
+  const digits = opts.symbol.replace(/\D/g, '');
+  const sym =
+    digits.length >= 4 && digits.length <= 6 ? digits.padStart(6, '0') : opts.symbol.trim();
+
+  const params: unknown[] = [ws, sym];
+  let marketFilter = '';
+  if (opts.market) {
+    params.push(opts.market);
+    marketFilter = ` AND (market = $${params.length} OR market IS NULL)`;
+  }
+  params.push(limit);
+
+  const res = await query<{
+    id: string;
+    title: string | null;
+    published_at: string | null;
+    parse_status: string;
+    source_url: string | null;
+    source_doc_id: string | null;
+    category: string | null;
+    source: string | null;
+  }>(
+    `SELECT id, title, published_at::text, parse_status, source_url, source_doc_id, category, source
+     FROM company_filings
+     WHERE workspace_id = $1 AND symbol = $2
+       ${marketFilter}
+     ORDER BY published_at DESC NULLS LAST, ingested_at DESC NULLS LAST
+     LIMIT $${params.length}`,
+    params,
+  );
+
+  return res.rows.map((r) => ({
+    id: r.id,
+    title: r.title,
+    publishedAt: r.published_at,
+    parseStatus: r.parse_status,
+    sourceUrl: r.source_url,
+    sourceDocId: r.source_doc_id,
+    category: r.category,
+    source: r.source,
+  }));
 }
 
 export async function listListedSecurities(opts: {
@@ -497,6 +672,183 @@ export async function upsertKgFilingAndEdge(input: {
      ON CONFLICT (workspace_id, from_entity_id, to_entity_id, relation_type) DO NOTHING`,
     [ws, input.companyEntityId, filingId],
   );
+}
+
+export async function getDisclosureTextPlain(
+  filingId: string,
+  workspaceId?: string,
+): Promise<string | null> {
+  const ws = workspaceId ?? getDefaultWorkspaceId();
+  const res = await query<{ content_plain: string | null }>(
+    `SELECT content_plain FROM disclosure_texts
+     WHERE workspace_id = $1 AND filing_id = $2
+     ORDER BY extracted_at DESC NULLS LAST
+     LIMIT 1`,
+    [ws, filingId],
+  );
+  const text = res.rows[0]?.content_plain;
+  return text && text.trim() ? text : null;
+}
+
+export async function listFilingsWithDisclosureText(opts: {
+  limit?: number;
+  symbols?: string[];
+  workspaceId?: string;
+  /** Skip filings that already have rule/llm relation edges. */
+  skipAlreadyExtracted?: boolean;
+}): Promise<Array<{
+  filingId: string;
+  symbol: string;
+  sourceDocId: string | null;
+  title: string | null;
+  contentPlain: string;
+}>> {
+  const ws = opts.workspaceId ?? getDefaultWorkspaceId();
+  const limit = Math.min(Math.max(opts.limit ?? 100, 1), 500);
+  const params: unknown[] = [ws];
+  let symbolFilter = '';
+  if (opts.symbols?.length) {
+    const normalized = opts.symbols.map((s) => {
+      const digits = s.replace(/\D/g, '');
+      return digits.length >= 4 && digits.length <= 6 ? digits.padStart(6, '0') : s.trim();
+    });
+    params.push(normalized);
+    symbolFilter = ` AND f.symbol = ANY($${params.length}::text[])`;
+  }
+  const skipFilter = opts.skipAlreadyExtracted
+    ? ` AND NOT EXISTS (
+         SELECT 1 FROM kg_edges e
+         WHERE e.workspace_id = f.workspace_id
+           AND e.props_json->>'filing_id' = f.id::text
+           AND e.props_json->>'extract_method' IS NOT NULL
+       )`
+    : '';
+  params.push(limit);
+  const res = await query<{
+    filing_id: string;
+    symbol: string;
+    source_doc_id: string | null;
+    title: string | null;
+    content_plain: string;
+  }>(
+    `SELECT DISTINCT ON (f.id)
+       f.id AS filing_id,
+       f.symbol,
+       f.source_doc_id,
+       f.title,
+       t.content_plain
+     FROM company_filings f
+     JOIN disclosure_texts t ON t.filing_id = f.id AND t.workspace_id = f.workspace_id
+     WHERE f.workspace_id = $1
+       AND f.source = 'cninfo'
+       AND f.parse_status IN ('extracted', 'partial')
+       AND t.content_plain IS NOT NULL
+       AND length(trim(t.content_plain)) > 50
+       ${symbolFilter}
+       ${skipFilter}
+     ORDER BY f.id, t.extracted_at DESC NULLS LAST
+     LIMIT $${params.length}`,
+    params,
+  );
+  return res.rows.map((r) => ({
+    filingId: r.filing_id,
+    symbol: r.symbol,
+    sourceDocId: r.source_doc_id,
+    title: r.title,
+    contentPlain: r.content_plain,
+  }));
+}
+
+export async function filingHasExtractedRelations(
+  filingId: string,
+  workspaceId?: string,
+): Promise<boolean> {
+  const ws = workspaceId ?? getDefaultWorkspaceId();
+  const res = await query<{ n: string }>(
+    `SELECT 1 AS n FROM kg_edges
+     WHERE workspace_id = $1
+       AND props_json->>'filing_id' = $2
+       AND props_json->>'extract_method' IS NOT NULL
+     LIMIT 1`,
+    [ws, filingId],
+  );
+  return res.rows.length > 0;
+}
+
+export async function upsertKgExtractedRelations(opts: {
+  companyEntityId: string;
+  filingId: string;
+  sourceDocId?: string | null;
+  market?: string;
+  relations: Array<{
+    relationType: string;
+    name: string;
+    role?: string;
+    evidence: string;
+    confidence: number;
+  }>;
+  workspaceId?: string;
+}): Promise<{ entitiesUpserted: number; edgesUpserted: number }> {
+  const ws = opts.workspaceId ?? getDefaultWorkspaceId();
+  const market = opts.market ?? 'cn';
+  let entitiesUpserted = 0;
+  let edgesUpserted = 0;
+
+  for (const rel of opts.relations) {
+    const externalKey = `org:${market}:${rel.name.replace(/\s+/g, '').slice(0, 80)}`;
+    const entityRes = await query<{ id: string }>(
+      `INSERT INTO kg_entities (workspace_id, entity_type, external_key, name, props_json)
+       VALUES ($1, 'org', $2, $3, $4)
+       ON CONFLICT (workspace_id, entity_type, external_key) DO UPDATE SET
+         name = EXCLUDED.name,
+         props_json = kg_entities.props_json || EXCLUDED.props_json,
+         updated_at = NOW()
+       RETURNING id`,
+      [
+        ws,
+        externalKey,
+        rel.name.slice(0, 200),
+        JSON.stringify({
+          market,
+          source: 'cninfo_relation_extract',
+          role: rel.role ?? null,
+        }),
+      ],
+    );
+    const orgId = entityRes.rows[0]?.id;
+    if (!orgId) continue;
+    entitiesUpserted += 1;
+
+    // Direction: listed company → org for subsidiary/guarantee/related;
+    // org → listed company for shareholder/controller.
+    const inbound = rel.relationType === 'shareholder' || rel.relationType === 'controller';
+    const fromId = inbound ? orgId : opts.companyEntityId;
+    const toId = inbound ? opts.companyEntityId : orgId;
+
+    const edgeRes = await query(
+      `INSERT INTO kg_edges (workspace_id, from_entity_id, to_entity_id, relation_type, props_json)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (workspace_id, from_entity_id, to_entity_id, relation_type) DO UPDATE SET
+         props_json = EXCLUDED.props_json`,
+      [
+        ws,
+        fromId,
+        toId,
+        rel.relationType,
+        JSON.stringify({
+          evidence: rel.evidence,
+          confidence: rel.confidence,
+          role: rel.role ?? null,
+          filing_id: opts.filingId,
+          source_doc_id: opts.sourceDocId ?? null,
+          extract_method: 'rule_v1',
+        }),
+      ],
+    );
+    if (edgeRes.rowCount && edgeRes.rowCount > 0) edgesUpserted += 1;
+  }
+
+  return { entitiesUpserted, edgesUpserted };
 }
 
 export async function updateFilingParseStatus(

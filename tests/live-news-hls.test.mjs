@@ -12,7 +12,6 @@ const readSrc = (relPath) => readFileSync(resolve(root, relPath), 'utf-8');
 const liveNewsSrc = readSrc('src/components/LiveNewsPanel.ts');
 const liveNewsSvc = readSrc('src/services/live-news.ts');
 const youtubeApi = readSrc('api/youtube/live.js');
-const sidecarSrc = readSrc('src-tauri/sidecar/local-api-server.mjs');
 const indexHtml = readSrc('index.html');
 
 // ── Extract channel IDs and DIRECT_HLS_MAP keys from source ──
@@ -201,7 +200,7 @@ describe('player decision tree', () => {
 // ── 6. resolveChannelVideo skips YouTube API for direct HLS ──
 
 describe('resolveChannelVideo optimization', () => {
-  it('skips fetchLiveVideoInfo for desktop direct-HLS channels', () => {
+  it('skips fetchLiveVideoInfo for direct-HLS channels', () => {
     const resolve = liveNewsSrc.slice(
       liveNewsSrc.indexOf('private async resolveChannelVideo'),
       liveNewsSrc.indexOf('private async switchChannel'),
@@ -270,85 +269,7 @@ describe('fetchLiveVideoInfo service', () => {
   });
 });
 
-// ── 9. Sidecar YouTube embed endpoint ──
-
-describe('sidecar youtube-embed endpoint', () => {
-  it('registers /api/youtube-embed route', () => {
-    assert.match(sidecarSrc, /\/api\/youtube-embed/,
-      'Sidecar must handle /api/youtube-embed');
-  });
-
-  it('validates videoId format', () => {
-    assert.match(sidecarSrc, /\[A-Za-z0-9_-\]\{11\}/,
-      'Must validate videoId is exactly 11 chars');
-  });
-
-  it('rejects invalid videoId with 400', () => {
-    assert.match(sidecarSrc, /status:\s*400/,
-      'Invalid videoId must return 400');
-  });
-
-  it('whitelists video quality values', () => {
-    assert.match(sidecarSrc, /small.*medium.*large.*hd720.*hd1080/,
-      'Must whitelist quality parameter values');
-  });
-
-  it('is exempt from auth gate (before auth middleware)', () => {
-    const embedPos = sidecarSrc.indexOf('/api/youtube-embed');
-    const authPos = sidecarSrc.indexOf('Global auth gate');
-    assert.ok(embedPos > 0 && authPos > 0, 'Both positions must exist');
-    assert.ok(embedPos < authPos,
-      'youtube-embed must be BEFORE auth gate (iframe src cannot carry auth headers)');
-  });
-
-  it('uses mute param (not hardcoded) in playerVars', () => {
-    const embedSection = sidecarSrc.slice(
-      sidecarSrc.indexOf('/api/youtube-embed'),
-      sidecarSrc.indexOf('Global auth gate'),
-    );
-    assert.match(embedSection, /mute:\$\{mute\}/,
-      'playerVars.mute must use the mute param, not hardcoded mute:1');
-    assert.doesNotMatch(embedSection, /playerVars:\{[^}]*mute:1[^}]*\}/,
-      'playerVars must NOT hardcode mute:1');
-  });
-
-  it('has postMessage bridge for play/pause/mute/unmute', () => {
-    const embedSection = sidecarSrc.slice(
-      sidecarSrc.indexOf('/api/youtube-embed'),
-      sidecarSrc.indexOf('Global auth gate'),
-    );
-    assert.match(embedSection, /case'play':.*playVideo/,
-      'postMessage bridge must handle play command');
-    assert.match(embedSection, /case'pause':.*pauseVideo/,
-      'postMessage bridge must handle pause command');
-    assert.match(embedSection, /case'mute':.*\.mute\(\)/,
-      'postMessage bridge must handle mute command');
-    assert.match(embedSection, /case'unmute':.*\.unMute\(\)/,
-      'postMessage bridge must handle unmute command');
-  });
-
-  it('has play overlay for autoplay failures', () => {
-    const embedSection = sidecarSrc.slice(
-      sidecarSrc.indexOf('/api/youtube-embed'),
-      sidecarSrc.indexOf('Global auth gate'),
-    );
-    assert.match(embedSection, /play-overlay/,
-      'Embed must include a play overlay for WKWebView autoplay fallback');
-    assert.match(embedSection, /setTimeout.*started.*overlay/s,
-      'Play overlay must show after timeout if video has not started');
-  });
-
-  it('sends yt-ready postMessage to parent on ready', () => {
-    const embedSection = sidecarSrc.slice(
-      sidecarSrc.indexOf('/api/youtube-embed'),
-      sidecarSrc.indexOf('Global auth gate'),
-    );
-    assert.match(embedSection, /postMessage\(\{type:'yt-ready'\}/,
-      'Must send yt-ready message to parent window');
-  });
-});
-
-// ── 10. Optional channels with fallbackVideoId ──
+// ── 9. Optional channels with fallbackVideoId ──
 
 describe('optional channels fallback coverage', () => {
   const highPriorityOptional = ['livenow-fox', 'abc-news', 'nbc-news', 'wion'];
@@ -372,12 +293,12 @@ describe('optional channels fallback coverage', () => {
   });
 });
 
-// ── 11. CSP allows sidecar iframe ──
+// ── 10. CSP configuration ──
 
 describe('CSP configuration', () => {
-  it('frame-src allows http://127.0.0.1:*', () => {
+  it('frame-src allows local dev origins', () => {
     assert.match(indexHtml, /frame-src[^;]*http:\/\/127\.0\.0\.1:\*/,
-      'CSP frame-src must allow sidecar localhost origin for YouTube embed iframe');
+      'CSP frame-src must allow localhost origins for embedded players');
   });
 
   it('media-src allows https: for CDN HLS streams', () => {

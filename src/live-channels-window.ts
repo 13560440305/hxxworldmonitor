@@ -13,7 +13,6 @@ import {
 } from '@/components/LiveNewsPanel';
 import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
-import { isDesktopRuntime, getRemoteApiBaseUrl } from '@/services/runtime';
 
 /** Builds a stable custom channel id from a YouTube handle (e.g. @Foo -> custom-foo). */
 function customChannelIdFromHandle(handle: string): string {
@@ -428,8 +427,7 @@ export function initLiveChannelsWindow(containerEl?: HTMLElement): void {
       let resolvedName = nameInput?.value?.trim() || '';
       if (!resolvedName) {
         try {
-          const baseUrl = isDesktopRuntime() ? getRemoteApiBaseUrl() : '';
-          const res = await fetch(`${baseUrl}/api/youtube/live?videoId=${encodeURIComponent(videoId)}`);
+          const res = await fetch(`/api/youtube/live?videoId=${encodeURIComponent(videoId)}`);
           if (res.ok) {
             const data = await res.json();
             resolvedName = data.channelName || data.title || '';
@@ -476,8 +474,7 @@ export function initLiveChannelsWindow(containerEl?: HTMLElement): void {
 
     let resolvedName = '';
     try {
-      const baseUrl = isDesktopRuntime() ? getRemoteApiBaseUrl() : '';
-      const res = await fetch(`${baseUrl}/api/youtube/live?channel=${encodeURIComponent(handle)}`);
+      const res = await fetch(`/api/youtube/live?channel=${encodeURIComponent(handle)}`);
       if (res.ok) {
         const data = await res.json();
         if (data.channelExists === false && !data.error) {

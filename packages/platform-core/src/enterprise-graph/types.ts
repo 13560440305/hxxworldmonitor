@@ -29,7 +29,7 @@ export interface EnterpriseGraphNode {
   id: string;
   symbol: string;
   name: string;
-  entityType: 'company' | 'news_item' | 'sector' | 'filing';
+  entityType: 'company' | 'news_item' | 'sector' | 'filing' | 'org';
   market?: EnterpriseGraphMarketId;
   props?: Record<string, unknown>;
 }

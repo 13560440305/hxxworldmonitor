@@ -1,5 +1,6 @@
 # Monorepo 结构说明
 
+> 系统目标与分层总览：[系统目标与架构.md](./系统目标与架构.md) · [文档索引](./README.md)  
 > 完整拆分背景、目录对照与修改指南见 **[Platform-Monorepo拆分说明.md](./Platform-Monorepo拆分说明.md)**。
 
 Platform 与前端已拆为 **npm workspaces** 独立子工程，共享代码在 `packages/`，可执行应用在 `apps/`。

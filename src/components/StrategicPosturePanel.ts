@@ -3,7 +3,6 @@ import { escapeHtml } from '@/utils/sanitize';
 import { fetchCachedTheaterPosture, type CachedTheaterPosture } from '@/services/cached-theater-posture';
 import { fetchMilitaryVessels } from '@/services/military-vessels';
 import { recalcPostureWithVessels, type TheaterPostureSummary } from '@/services/military-surge';
-import { isDesktopRuntime } from '@/services/runtime';
 import { t } from '../services/i18n';
 import type { NewsItem, DeductContextDetail } from '@/types';
 import { buildNewsContext } from '@/utils/news-context';
@@ -435,7 +434,6 @@ export class StrategicPosturePanel extends Panel {
           ${p.strikeCapable ? `<span class="posture-strike">⚡ ${t('components.strategicPosture.strike')}</span>` : ''}
           ${this.getTrendIcon(p.trend, p.changePercent)}
           ${p.targetNation ? `<span class="posture-focus">→ ${escapeHtml(p.targetNation)}</span>` : ''}
-          ${isDesktopRuntime() ? `<button class="posture-deduce-btn" title="Deduce Situation with AI" style="background: none; border: none; cursor: pointer; opacity: 0.7; font-size: 1.1em; transition: opacity 0.2s; margin-left: auto;" data-theater='${escapeHtml(JSON.stringify(p))}'>\u{1F9E0}</button>` : ''}
         </div>
       </div>
     `;

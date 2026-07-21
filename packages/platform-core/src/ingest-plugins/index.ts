@@ -1,4 +1,5 @@
 export { cninfoDisclosurePlugin, CNINFO_DISCLOSURE_PATHS } from './cninfo-disclosure.js';
+export { disclosureRelationExtractPlugin } from './disclosure-relation-extract.js';
 export { rssIngestFastPlugin } from './rss-ingest-fast.js';
 export { rssIngestFullPlugin } from './rss-ingest-full.js';
 export { coldTierArchivePlugin } from './cold-tier-archive.js';

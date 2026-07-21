@@ -44,6 +44,9 @@ import {
   fetchJobRuns,
   fetchJobCheckpoints,
   fetchKgDagStatus,
+  fetchJobQueueStatus,
+  reclaimStaleJobs,
+  fetchDisclosureStats,
   enqueueAdminJob,
   patchJobDefinitionEnabled,
   testIntegrationProvider,
@@ -75,6 +78,8 @@ import {
   type JobCheckpointRow,
   type KgDagStatus,
   type EnqueueJobResult,
+  type HandlerQueueStatus,
+  type CninfoDisclosureStats,
 } from '@/services/platform-admin-api';
 
 type Section = 'overview' | 'presets' | 'users' | 'subscriptions' | 'jobs' | 'logs' | 'settings' | 'integrations' | 'engines' | 'ai-models';
@@ -114,8 +119,13 @@ let jobRuns: JobRunRow[] = [];
 let jobHandlers: JobHandlerInfo[] = [];
 let jobCheckpoints: JobCheckpointRow[] = [];
 let kgDagStatus: KgDagStatus | null = null;
-type JobsTab = 'tasks' | 'dag' | 'checkpoints' | 'runs';
+let disclosureQueueStatus: HandlerQueueStatus | null = null;
+let disclosureStats: CninfoDisclosureStats | null = null;
+type JobsTab = 'tasks' | 'dag' | 'checkpoints' | 'runs' | 'disclosure';
 let jobsTab: JobsTab = 'tasks';
+let jobsPage = 1;
+const JOBS_PAGE_SIZE = 10;
+let reclaimingStale = false;
 let reloadGeneration = 0;
 let modalOpenCount = 0;
 let renderQueued = false;
@@ -256,12 +266,14 @@ async function reloadSection(): Promise<void> {
     } else if (section === 'ai-models') {
       aiModels = await fetchAiModels();
     } else if (section === 'jobs') {
-      [jobDefinitions, jobRuns, jobHandlers, jobCheckpoints, kgDagStatus] = await Promise.all([
+      [jobDefinitions, jobRuns, jobHandlers, jobCheckpoints, kgDagStatus, disclosureQueueStatus, disclosureStats] = await Promise.all([
         fetchJobDefinitions(),
         fetchJobRuns(40),
         fetchJobHandlers(),
         fetchJobCheckpoints(),
         fetchKgDagStatus(),
+        fetchJobQueueStatus('disclosure-ingest-cn').catch(() => null),
+        fetchDisclosureStats().catch(() => null),
       ]);
     }
     if (!meta) meta = await fetchAdminMeta();
@@ -380,6 +392,7 @@ function renderShell(content: string): void {
       }
       section = next;
       if (next === 'integrations') integrationsPage = 1;
+      if (next === 'jobs') jobsPage = 1;
       if (next === 'subscriptions') {
         subscriptionFilterUserId = null;
         subscriptionsPage = 1;
@@ -1132,7 +1145,32 @@ function presetsSectionHint(): string {
 }
 
 function jobsSectionHint(): string {
-  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。股票资讯 + 财报均成功后，若 <code>PLATFORM_KG_DAG_ENABLED</code> 未关闭，将自动入队 <code>knowledge-graph-build</code>。</p>`;
+  return `<p class="pa-section-hint">任务默认<strong>入队</strong>到 <code>job_runs</code>，由 <code>npm run platform:executor</code> 执行；定时调度需 <code>npm run platform:scheduler</code>。定时任务列表每页 ${JOBS_PAGE_SIZE} 条。巨潮采集选 <code>disclosure-ingest-cn</code>，点「立即运行」可配置参数。<strong>force 建议填写 symbols</strong>；全市场 force 需额外确认。</p>`;
+}
+
+function renderDisclosureQueueBanner(): string {
+  const q = disclosureQueueStatus;
+  if (!q) return '';
+  const parts = [
+    `pending ${q.pending}`,
+    `running ${q.running}`,
+    `并发上限 ${q.maxConcurrency}`,
+  ];
+  const blocked = q.blocked
+    ? `<strong>队列阻塞</strong>：有 running 时同 handler 的 pending 不会被 claim（max_concurrency=${q.maxConcurrency}）。`
+    : q.running > 0
+      ? '有任务正在运行；新入队的任务将排队等待。'
+      : q.pending > 0
+        ? '有任务排队；请确认 <code>platform:executor</code> 在运行。'
+        : '队列空闲。';
+  const reclaimBtn = q.running > 0
+    ? `<button type="button" class="pa-btn pa-btn-sm" id="reclaimStaleJobsBtn" ${reclaimingStale ? 'disabled' : ''}>${reclaimingStale ? '回收中…' : '回收过期锁'}</button>`
+    : '';
+  return `
+    <div class="pa-status ${q.blocked ? 'err' : q.running > 0 ? '' : 'ok'}" style="margin:8px 0;display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between">
+      <span><strong>巨潮队列</strong> · ${parts.join(' · ')} — ${blocked}</span>
+      ${reclaimBtn}
+    </div>`;
 }
 
 function kgDagReasonLabel(reason: string): string {
@@ -1165,6 +1203,7 @@ function renderKgDagPanel(): string {
   const downstreamCp = dag.checkpoints[dag.downstream];
   return `
     <p class="pa-muted">${dag.enabled ? '已启用' : '已关闭'} · 下游 <code>${escapeHtml(dag.downstream)}</code> · 活跃 run ${dag.activeDownstreamRuns} · ${readyBadge}</p>
+    <p class="pa-muted">配对上游：stock-news + earnings；可选单独上游：disclosure-ingest-cn（巨潮成功后也可触发图谱重建）。</p>
     ${dag.cycleStart ? `<p class="pa-muted">当前周期起点：${formatJobTime(dag.cycleStart)}</p>` : ''}
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
       <th>上游 Handler</th><th>最近成功</th><th>Run</th>
@@ -1236,7 +1275,128 @@ function formatEnqueueToast(result: EnqueueJobResult, action: string): string {
     return `${action}完成（同步）`;
   }
   const runId = result.runId ? result.runId.slice(0, 8) : '—';
+  const qs = result.queueStatus;
+  if (qs?.blocked) {
+    return `${action}已入队（run ${runId}…），但队列阻塞：running=${qs.running} pending=${qs.pending}，可点「回收过期锁」或等当前任务结束`;
+  }
+  if (qs && qs.running > 0) {
+    return `${action}已入队（run ${runId}…），当前有 ${qs.running} 个运行中，将排队`;
+  }
   return `${action}已入队（run ${runId}…），请确认 executor 在运行`;
+}
+
+function formatJobRunStats(run: JobRunRow): string {
+  if (!run.stats || !Object.keys(run.stats).length) return '';
+  if (run.handlerKey === 'disclosure-ingest-cn') {
+    const s = run.stats;
+    const parts = [
+      s.listed != null ? `listed=${s.listed}` : '',
+      s.filingsNew != null ? `new=${s.filingsNew}` : '',
+      s.skippedExisting != null ? `skip=${s.skippedExisting}` : '',
+      s.extracted != null ? `extracted=${s.extracted}` : '',
+      s.relationsExtracted != null ? `rels=${s.relationsExtracted}` : '',
+      s.failed != null ? `failed=${s.failed}` : '',
+    ].filter(Boolean);
+    if (parts.length) return parts.join(' · ');
+  }
+  if (run.handlerKey === 'disclosure-relation-extract') {
+    const s = run.stats;
+    const parts = [
+      s.scanned != null ? `scanned=${s.scanned}` : '',
+      s.relationsExtracted != null ? `rels=${s.relationsExtracted}` : '',
+      s.edgesUpserted != null ? `edges=${s.edgesUpserted}` : '',
+    ].filter(Boolean);
+    if (parts.length) return parts.join(' · ');
+  }
+  const raw = JSON.stringify(run.stats);
+  return raw.length > 160 ? `${raw.slice(0, 160)}…` : raw;
+}
+
+function enqueueJobRunFlow(handlerKey: string, payload?: Record<string, unknown>): void {
+  if (jobEnqueueKey) return;
+  jobEnqueueKey = handlerKey;
+  render();
+  void enqueueAdminJob(handlerKey, payload)
+    .then((r) => {
+      if (r.queueStatus) disclosureQueueStatus = r.queueStatus;
+      showToast(formatEnqueueToast(r, '任务'));
+    })
+    .catch((err) => showToast(String(err), true))
+    .finally(() => {
+      jobEnqueueKey = null;
+      void reloadSection();
+    });
+}
+
+function openCninfoJobRunModal(def?: JobDefinitionRow): void {
+  const basePayload = { ...(def?.payload ?? { market: 'cn', source: 'cninfo' }) };
+  const queueHint = disclosureQueueStatus?.blocked
+    ? `<p class="pa-status err">当前巨潮队列阻塞（running=${disclosureQueueStatus.running}）。新任务会排队；可先「回收过期锁」。</p>`
+    : disclosureQueueStatus && disclosureQueueStatus.running > 0
+      ? `<p class="pa-muted">当前有 ${disclosureQueueStatus.running} 个巨潮任务运行中，新任务将排队。</p>`
+      : '';
+  openModal(modalShell('运行 CNINFO 披露采集', `
+    <p class="pa-muted">任务将<strong>入队</strong>，需另开终端运行 <code>npm run platform:executor</code>。数据源「巨潮资讯网」须已启用。</p>
+    ${queueHint}
+    <div class="pa-field"><label>回溯天数 lookbackDays</label>
+      <input id="cnLookbackDays" type="number" min="1" max="365" value="7" /></div>
+    <div class="pa-field"><label>股票代码 symbols（force 时建议必填，逗号分隔）</label>
+      <input id="cnSymbols" type="text" placeholder="600519,000001" /></div>
+    <div class="pa-field"><label>重采模式 recollect（可选）</label>
+      <select id="cnRecollect">
+        <option value="">默认增量</option>
+        <option value="failed">仅失败项 failed</option>
+        <option value="partial">失败+部分 partial</option>
+        <option value="all">全部 all</option>
+      </select></div>
+    <label class="pa-inline-check"><input type="checkbox" id="cnForce" /> force（忽略已采跳过，重新 download/extract）</label>
+    <label class="pa-inline-check" id="cnFullMarketWrap" style="display:none;margin-top:8px">
+      <input type="checkbox" id="cnForceFullMarket" />
+      确认全市场 force（无 symbols，耗时长，易堵队列）
+    </label>
+  `, modalActions('入队运行')), (root) => {
+    const forceEl = root.querySelector('#cnForce') as HTMLInputElement;
+    const symbolsEl = root.querySelector('#cnSymbols') as HTMLInputElement;
+    const fullWrap = root.querySelector('#cnFullMarketWrap') as HTMLElement;
+    const syncFullMarket = () => {
+      const need = forceEl.checked && !symbolsEl.value.trim();
+      fullWrap.style.display = need ? 'block' : 'none';
+    };
+    forceEl.addEventListener('change', syncFullMarket);
+    symbolsEl.addEventListener('input', syncFullMarket);
+    syncFullMarket();
+
+    bindModalActions(root, () => {
+      const lookbackRaw = (root.querySelector('#cnLookbackDays') as HTMLInputElement).value;
+      const lookbackDays = Math.max(1, Number(lookbackRaw) || 7);
+      const symbolsRaw = symbolsEl.value.trim();
+      const recollect = (root.querySelector('#cnRecollect') as HTMLSelectElement).value;
+      const force = forceEl.checked;
+      const allowFullMarket = (root.querySelector('#cnForceFullMarket') as HTMLInputElement).checked;
+      const symbols = symbolsRaw
+        ? symbolsRaw.split(/[,，\s]+/).map((s) => s.trim()).filter(Boolean)
+        : [];
+      if (force && symbols.length === 0 && !allowFullMarket) {
+        showToast('force 请填写 symbols，或勾选「确认全市场 force」', true);
+        return;
+      }
+      const payload: Record<string, unknown> = { ...basePayload, lookbackDays };
+      if (symbols.length) payload.symbols = symbols;
+      if (recollect === 'failed' || recollect === 'partial' || recollect === 'all') {
+        payload.recollect = recollect;
+      }
+      if (force) payload.force = true;
+      if (force && symbols.length === 0 && allowFullMarket) payload.allowFullMarket = true;
+      closeModalFromRoot(root);
+      enqueueJobRunFlow('disclosure-ingest-cn', payload);
+    });
+  });
+}
+
+function goJobsPage(next: number): void {
+  const { page } = paginateList(jobDefinitions, next, JOBS_PAGE_SIZE);
+  jobsPage = page;
+  render();
 }
 
 function renderJobDefinitionsTable(): string {
@@ -1244,11 +1404,15 @@ function renderJobDefinitionsTable(): string {
     return '<p class="pa-muted">暂无任务定义。请启动 platform:api 并完成数据库 bootstrap。</p>';
   }
   const handlerSet = new Set(jobHandlers.map((h) => h.key));
-  const rows = jobDefinitions.map((def) => {
+  const { items, page, totalPages, total } = paginateList(jobDefinitions, jobsPage, JOBS_PAGE_SIZE);
+  jobsPage = page;
+  const rowOffset = (page - 1) * JOBS_PAGE_SIZE;
+  const rows = items.map((def, i) => {
     const registered = handlerSet.has(def.handlerKey);
     const runDisabled = jobEnqueueKey === def.handlerKey || !registered;
     return `
     <tr>
+      <td class="pa-muted pa-col-index">${rowOffset + i + 1}</td>
       <td><strong>${escapeHtml(def.displayName)}</strong><br><span class="pa-mono-sm pa-muted">${escapeHtml(def.handlerKey)}</span></td>
       <td>${escapeHtml(formatJobSchedule(def))}</td>
       <td><span class="pa-badge${def.tier === 'heavy' ? ' warn' : ''}">${escapeHtml(def.tier)}</span></td>
@@ -1270,8 +1434,9 @@ function renderJobDefinitionsTable(): string {
   }).join('');
   return `
     <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
-      <th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
-    </tr></thead><tbody>${rows}</tbody></table></div>`;
+      <th class="pa-col-index">序号</th><th>任务</th><th>调度</th><th>档位</th><th>状态</th><th>下次运行</th><th>上次运行</th><th>操作</th>
+    </tr></thead><tbody>${rows}</tbody></table></div>
+    ${renderTablePagination('jobs', page, totalPages, total, JOBS_PAGE_SIZE)}`;
 }
 
 function renderJobRunsTable(): string {
@@ -1283,7 +1448,7 @@ function renderJobRunsTable(): string {
       ? `<br><span class="pa-muted">${escapeHtml(run.errorMessage.slice(0, 120))}</span>`
       : '';
     const stats = run.stats && Object.keys(run.stats).length
-      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(JSON.stringify(run.stats).slice(0, 100))}</span>`
+      ? `<br><span class="pa-mono-sm pa-muted">${escapeHtml(formatJobRunStats(run))}</span>`
       : '';
     return `
     <tr>
@@ -1302,8 +1467,12 @@ function renderJobRunsTable(): string {
 }
 
 function renderJobsTabBar(): string {
+  const failedN = disclosureStats
+    ? disclosureStats.recollectableFailed + disclosureStats.recollectablePartial
+    : 0;
   const tabs: { id: JobsTab; label: string; count?: number }[] = [
     { id: 'tasks', label: '定时任务', count: jobDefinitions.length },
+    { id: 'disclosure', label: '巨潮披露', count: failedN > 0 ? failedN : disclosureStats?.total },
     { id: 'dag', label: '知识图谱 DAG' },
     { id: 'checkpoints', label: 'Checkpoint', count: jobCheckpoints.length },
     { id: 'runs', label: '最近执行', count: jobRuns.length },
@@ -1318,6 +1487,55 @@ function renderJobsTabBar(): string {
   return `<div class="pa-tabs" role="tablist">${buttons}</div>`;
 }
 
+function renderDisclosurePanel(): string {
+  const s = disclosureStats;
+  if (!s) {
+    return '<p class="pa-muted">无法加载披露统计（需数据库与 cninfo filings）。</p>';
+  }
+  const statusBits = Object.entries(s.byStatus)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([k, n]) => `<span class="pa-badge${k === 'failed' ? ' off' : k === 'partial' ? ' warn' : ''}">${escapeHtml(k)} ${n}</span>`)
+    .join(' ');
+  const sampleRows = s.samples.length
+    ? s.samples.map((row) => `
+      <tr>
+        <td class="pa-mono-sm">${escapeHtml(row.symbol)}</td>
+        <td>${escapeHtml((row.title ?? '—').slice(0, 60))}</td>
+        <td><span class="pa-badge${row.parseStatus === 'failed' ? ' off' : ' warn'}">${escapeHtml(row.parseStatus)}</span></td>
+        <td class="pa-muted">${row.retryCount}/${s.maxRetry}</td>
+        <td class="pa-muted">${escapeHtml((row.errorMessage ?? '—').slice(0, 80))}</td>
+      </tr>`).join('')
+    : '<tr><td colspan="5" class="pa-muted">暂无 failed/partial 样本</td></tr>';
+
+  const busy = Boolean(jobEnqueueKey);
+  return `
+    <p class="pa-muted">cninfo 公告合计 <strong>${s.total}</strong> · 可重采 failed <strong>${s.recollectableFailed}</strong> · partial <strong>${s.recollectablePartial}</strong>（retry &lt; ${s.maxRetry}）</p>
+    <div class="pa-toolbar" style="flex-wrap:wrap;gap:8px">
+      ${statusBits || '<span class="pa-muted">无状态分布</span>'}
+    </div>
+    <div class="pa-toolbar" style="margin-top:10px">
+      <button type="button" class="pa-btn pa-btn-primary" id="recollectFailedBtn"
+        ${busy || s.recollectableFailed === 0 ? 'disabled' : ''}>
+        ${jobEnqueueKey === 'disclosure-recollect-failed' ? '入队中…' : `一键重采失败 (${s.recollectableFailed})`}
+      </button>
+      <button type="button" class="pa-btn" id="recollectPartialBtn"
+        ${busy || (s.recollectableFailed + s.recollectablePartial) === 0 ? 'disabled' : ''}>
+        ${jobEnqueueKey === 'disclosure-recollect-partial' ? '入队中…' : `重采 failed+partial (${s.recollectableFailed + s.recollectablePartial})`}
+      </button>
+      <button type="button" class="pa-btn pa-btn-primary" id="extractRelationsBtn" ${busy || s.total === 0 ? 'disabled' : ''}>
+        ${jobEnqueueKey === 'disclosure-relation-extract' ? '入队中…' : '从已有正文抽关系'}
+      </button>
+      <label class="pa-inline-check"><input type="checkbox" id="extractUseLlm" /> 启用 LLM 增强（需 HXXBOT）</label>
+      <label class="pa-inline-check"><input type="checkbox" id="extractForce" /> 强制重抽（含已抽过）</label>
+      <button type="button" class="pa-btn" id="openCninfoModalBtn" ${busy ? 'disabled' : ''}>自定义入队…</button>
+    </div>
+    <p class="pa-muted" style="margin-top:8px">一键重采 / 关系抽取会入队对应 job，由 executor 执行。默认跳过已抽过关系的公告；LLM 为规则结果增强。</p>
+    <h3 class="pa-subhead">失败 / 部分样本</h3>
+    <div class="pa-table-wrap"><table class="pa-table"><thead><tr>
+      <th>代码</th><th>标题</th><th>状态</th><th>重试</th><th>错误</th>
+    </tr></thead><tbody>${sampleRows}</tbody></table></div>`;
+}
+
 function renderJobsTabPanel(): string {
   switch (jobsTab) {
     case 'tasks':
@@ -1328,6 +1546,8 @@ function renderJobsTabPanel(): string {
           <button class="pa-btn pa-btn-primary" id="deliverAllBtn" ${jobRunning ? 'disabled' : ''}>${jobRunning === 'deliver' ? '入队中…' : '全量发信'}</button>
         </div>
         ${renderJobDefinitionsTable()}`;
+    case 'disclosure':
+      return renderDisclosurePanel();
     case 'dag':
       return renderKgDagPanel();
     case 'checkpoints':
@@ -1342,6 +1562,7 @@ function renderJobsTabPanel(): string {
 function renderJobsPanel(): string {
   return `
     ${jobsSectionHint()}
+    ${renderDisclosureQueueBanner()}
     ${renderJobsTabBar()}
     <div class="pa-tab-panel" role="tabpanel">${renderJobsTabPanel()}</div>`;
 }
@@ -1533,16 +1754,83 @@ function bindSectionEvents(): void {
       const handlerKey = (el as HTMLElement).dataset.runJob ?? '';
       if (!handlerKey || jobEnqueueKey) return;
       const def = jobDefinitions.find((d) => d.handlerKey === handlerKey);
-      jobEnqueueKey = handlerKey;
-      render();
-      void enqueueAdminJob(handlerKey, def?.payload)
-        .then((r) => showToast(formatEnqueueToast(r, '任务')))
-        .catch((err) => showToast(String(err), true))
-        .finally(() => {
-          jobEnqueueKey = null;
-          void reloadSection();
-        });
+      if (handlerKey === 'disclosure-ingest-cn') {
+        openCninfoJobRunModal(def);
+        return;
+      }
+      enqueueJobRunFlow(handlerKey, def?.payload);
     });
+  });
+
+  document.getElementById('reclaimStaleJobsBtn')?.addEventListener('click', () => {
+    if (reclaimingStale) return;
+    reclaimingStale = true;
+    render();
+    void reclaimStaleJobs(300)
+      .then((r) => showToast(r.reclaimed > 0 ? `已回收 ${r.reclaimed} 条过期 running` : '没有可回收的过期锁'))
+      .catch((err) => showToast(String(err), true))
+      .finally(() => {
+        reclaimingStale = false;
+        void reloadSection();
+      });
+  });
+
+  document.getElementById('recollectFailedBtn')?.addEventListener('click', () => {
+    if (jobEnqueueKey) return;
+    jobEnqueueKey = 'disclosure-recollect-failed';
+    render();
+    void enqueueAdminJob('disclosure-ingest-cn', {
+      market: 'cn',
+      source: 'cninfo',
+      recollect: 'failed',
+    })
+      .then((r) => {
+        if (r.queueStatus) disclosureQueueStatus = r.queueStatus;
+        showToast(formatEnqueueToast(r, '失败重采'));
+      })
+      .catch((err) => showToast(String(err), true))
+      .finally(() => {
+        jobEnqueueKey = null;
+        void reloadSection();
+      });
+  });
+
+  document.getElementById('recollectPartialBtn')?.addEventListener('click', () => {
+    if (jobEnqueueKey) return;
+    jobEnqueueKey = 'disclosure-recollect-partial';
+    render();
+    void enqueueAdminJob('disclosure-ingest-cn', {
+      market: 'cn',
+      source: 'cninfo',
+      recollect: 'partial',
+    })
+      .then((r) => {
+        if (r.queueStatus) disclosureQueueStatus = r.queueStatus;
+        showToast(formatEnqueueToast(r, 'partial 重采'));
+      })
+      .catch((err) => showToast(String(err), true))
+      .finally(() => {
+        jobEnqueueKey = null;
+        void reloadSection();
+      });
+  });
+
+  document.getElementById('extractRelationsBtn')?.addEventListener('click', () => {
+    if (jobEnqueueKey) return;
+    jobEnqueueKey = 'disclosure-relation-extract';
+    render();
+    void enqueueAdminJob('disclosure-relation-extract', { limit: 100 })
+      .then((r) => showToast(formatEnqueueToast(r, '关系抽取')))
+      .catch((err) => showToast(String(err), true))
+      .finally(() => {
+        jobEnqueueKey = null;
+        void reloadSection();
+      });
+  });
+
+  document.getElementById('openCninfoModalBtn')?.addEventListener('click', () => {
+    const def = jobDefinitions.find((d) => d.handlerKey === 'disclosure-ingest-cn');
+    openCninfoJobRunModal(def);
   });
 
   document.getElementById('logServiceSelect')?.addEventListener('change', (e) => {
@@ -1608,6 +1896,15 @@ function bindSectionEvents(): void {
       const next = Number(btn.dataset.page);
       if (!Number.isFinite(next)) return;
       goIntegrationsPage(next);
+    });
+  });
+  app.querySelectorAll('[data-page-nav="jobs"]').forEach((el) => {
+    el.addEventListener('click', () => {
+      const btn = el as HTMLButtonElement;
+      if (btn.disabled) return;
+      const next = Number(btn.dataset.page);
+      if (!Number.isFinite(next)) return;
+      goJobsPage(next);
     });
   });
   app.querySelectorAll('[data-del-integration]').forEach((el) => {

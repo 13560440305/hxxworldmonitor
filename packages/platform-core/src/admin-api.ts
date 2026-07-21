@@ -80,12 +80,16 @@ import {
 } from './jobs/job-service.js';
 import { jobDefinitionToJson, jobRunToJson, jobCheckpointToJson, kgDagStatusToJson } from './jobs/job-admin.js';
 import {
+  getHandlerQueueStatus,
   listJobDefinitions,
   listRecentJobRuns,
+  reclaimStaleJobRuns,
   setJobDefinitionEnabled,
 } from './jobs/job-repository.js';
 import { listJobCheckpoints } from './jobs/job-checkpoint.js';
 import { evaluateKgDag } from './jobs/job-dag.js';
+import { getCninfoDisclosureStats } from './enterprise-graph/listed-companies-repository.js';
+import { getCninfoDisclosureStats } from './enterprise-graph/listed-companies-repository.js';
 
 type JsonFn = (res: ServerResponse, status: number, body: unknown) => void;
 type ReadBodyFn = (req: IncomingMessage) => Promise<string>;
@@ -974,6 +978,38 @@ export async function handlePlatformAdminRoutes(
     return true;
   }
 
+  if (req.method === 'GET' && path === '/platform/v1/admin/jobs/queue-status') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    const handlerKey = (url.searchParams.get('handlerKey') ?? 'disclosure-ingest-cn').trim();
+    if (!handlerKey) {
+      json(res, 400, { error: 'handlerKey is required' });
+      return true;
+    }
+    const status = await getHandlerQueueStatus(handlerKey);
+    json(res, 200, { status });
+    return true;
+  }
+
+  if (req.method === 'POST' && path === '/platform/v1/admin/jobs/reclaim-stale') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    let body: { lockTtlSec?: number } = {};
+    try {
+      const raw = await readBody(req);
+      if (raw.trim()) body = JSON.parse(raw) as typeof body;
+    } catch {
+      json(res, 400, { error: 'Invalid JSON body' });
+      return true;
+    }
+    const lockTtlSec = Number(body.lockTtlSec ?? 300);
+    const reclaimed = await reclaimStaleJobRuns(
+      Number.isFinite(lockTtlSec) && lockTtlSec > 0 ? lockTtlSec : 300,
+    );
+    json(res, 200, { ok: true, reclaimed });
+    return true;
+  }
+
   if (req.method === 'POST' && path === '/platform/v1/admin/jobs/enqueue') {
     if (!checkAdmin(req, res, json)) return true;
     if (!dbRequired(res, json)) return true;
@@ -988,12 +1024,27 @@ export async function handlePlatformAdminRoutes(
       json(res, 400, { error: 'handlerKey is required' });
       return true;
     }
+    const handlerKey = body.handlerKey.trim();
+    const payload = body.payload ?? {};
+    if (handlerKey === 'disclosure-ingest-cn') {
+      const force = payload.force === true;
+      const symbols = Array.isArray(payload.symbols) ? payload.symbols : [];
+      const allowFullMarket = payload.allowFullMarket === true;
+      if (force && symbols.length === 0 && !allowFullMarket) {
+        json(res, 400, {
+          error:
+            'force=true without symbols requires allowFullMarket=true (full-market re-download is heavy)',
+        });
+        return true;
+      }
+    }
     try {
       const queued = await enqueuePlatformJob({
-        handlerKey: body.handlerKey.trim(),
-        payload: body.payload,
+        handlerKey,
+        payload,
       });
-      json(res, 202, { ok: true, queued: true, ...queued });
+      const queueStatus = await getHandlerQueueStatus(handlerKey);
+      json(res, 202, { ok: true, queued: true, ...queued, queueStatus });
     } catch (err) {
       json(res, 400, { error: String(err) });
     }
@@ -1037,6 +1088,14 @@ export async function handlePlatformAdminRoutes(
     if (!dbRequired(res, json)) return true;
     const dag = await evaluateKgDag();
     json(res, 200, { dag: kgDagStatusToJson(dag) });
+    return true;
+  }
+
+  if (req.method === 'GET' && path === '/platform/v1/admin/disclosure/stats') {
+    if (!checkAdmin(req, res, json)) return true;
+    if (!dbRequired(res, json)) return true;
+    const stats = await getCninfoDisclosureStats();
+    json(res, 200, { stats });
     return true;
   }
 

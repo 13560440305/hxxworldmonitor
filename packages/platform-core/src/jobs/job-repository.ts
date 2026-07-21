@@ -208,6 +208,15 @@ export async function countRunningJobs(handlerKey: string): Promise<number> {
   return Number(res.rows[0]?.n ?? 0);
 }
 
+export async function countPendingJobs(handlerKey: string): Promise<number> {
+  const res = await query<{ n: string }>(
+    `SELECT COUNT(*)::text AS n FROM job_runs
+     WHERE handler_key = $1 AND status = 'pending'`,
+    [handlerKey],
+  );
+  return Number(res.rows[0]?.n ?? 0);
+}
+
 export async function countActiveJobRuns(handlerKey: string): Promise<number> {
   const res = await query<{ n: string }>(
     `SELECT COUNT(*)::text AS n FROM job_runs
@@ -215,6 +224,56 @@ export async function countActiveJobRuns(handlerKey: string): Promise<number> {
     [handlerKey],
   );
   return Number(res.rows[0]?.n ?? 0);
+}
+
+export interface HandlerQueueStatus {
+  handlerKey: string;
+  pending: number;
+  running: number;
+  maxConcurrency: number;
+  blocked: boolean;
+  runningRuns: Array<{
+    id: string;
+    startedAt: string | null;
+    lockedUntil: string | null;
+    lockedBy: string | null;
+  }>;
+}
+
+export async function getHandlerQueueStatus(handlerKey: string): Promise<HandlerQueueStatus> {
+  const [pending, running, defRes, runningRows] = await Promise.all([
+    countPendingJobs(handlerKey),
+    countRunningJobs(handlerKey),
+    query<{ max_concurrency: number }>(
+      `SELECT max_concurrency FROM job_definitions WHERE handler_key = $1 LIMIT 1`,
+      [handlerKey],
+    ),
+    query<{
+      id: string;
+      started_at: string | null;
+      locked_until: string | null;
+      locked_by: string | null;
+    }>(
+      `SELECT id, started_at::text, locked_until::text, locked_by
+       FROM job_runs WHERE handler_key = $1 AND status = 'running'
+       ORDER BY started_at ASC NULLS LAST LIMIT 5`,
+      [handlerKey],
+    ),
+  ]);
+  const maxConcurrency = Number(defRes.rows[0]?.max_concurrency ?? 1);
+  return {
+    handlerKey,
+    pending,
+    running,
+    maxConcurrency,
+    blocked: running >= maxConcurrency && pending > 0,
+    runningRuns: runningRows.rows.map((r) => ({
+      id: r.id,
+      startedAt: r.started_at,
+      lockedUntil: r.locked_until,
+      lockedBy: r.locked_by,
+    })),
+  };
 }
 
 export async function reclaimStaleJobRuns(lockTtlSec = 300): Promise<number> {

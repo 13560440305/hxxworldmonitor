@@ -8,7 +8,7 @@
 
 - 环境变量完整列表：[RELAY_PARAMETERS.md](./RELAY_PARAMETERS.md)
 - 英文架构说明：[DOCUMENTATION.md](./DOCUMENTATION.md)（Railway Relay Architecture 章节）
-- 中文部署概览：[项目分析-数据源与多语言.md](./项目分析-数据源与多语言.md)
+- 数据源总览：[数据源说明.md](./数据源说明.md) · 架构：[系统目标与架构.md](./系统目标与架构.md)
 
 ---
 
@@ -143,7 +143,7 @@ AISStream (wss://stream.aisstream.io/v0/stream)
 | `RELAY_SHARED_SECRET` | 与 Relay 一致的共享密钥 |
 | `RELAY_AUTH_HEADER` | 默认 `x-relay-key` |
 
-桌面端 sidecar 可在本地处理部分 relay 逻辑，Web 自托管需显式配置 `WS_RELAY_URL`。详见 [DESKTOP_CONFIGURATION.md](./DESKTOP_CONFIGURATION.md)。
+Web 自托管需显式配置 `WS_RELAY_URL` / `VITE_WS_RELAY_URL`。详见 [RELAY_PARAMETERS.md](./RELAY_PARAMETERS.md)。
 
 ---
 
@@ -356,5 +356,6 @@ curl -sS https://<relay-host>/metrics \
 ## 13. 延伸阅读
 
 - [RELAY_PARAMETERS.md](./RELAY_PARAMETERS.md) — 全部环境变量与推荐调优值
-- [README.md](../README.md) — 双平台架构（Vercel + Railway）总览
-- [API_KEY_DEPLOYMENT.md](./API_KEY_DEPLOYMENT.md) — 密钥部署通用说明
+- [数据源说明.md](./数据源说明.md) — 数据源总览（含 relay）
+- [系统目标与架构.md](./系统目标与架构.md) — 系统架构
+- [文档说明清单.md](./文档说明清单.md) — 全库文档索引

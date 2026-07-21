@@ -34,12 +34,6 @@ const DEFAULT_CACHE_TTL_MS = 10 * 60 * 1000; // 10 minutes
 const PERSISTENT_STALE_CEILING_MS = 24 * 60 * 60 * 1000; // 24h — discard persistent entries older than this
 
 
-function isDesktopOfflineMode(): boolean {
-  if (typeof window === 'undefined') return false;
-  const hasTauri = Boolean((window as unknown as { __TAURI__?: unknown }).__TAURI__);
-  return hasTauri && typeof navigator !== 'undefined' && navigator.onLine === false;
-}
-
 export class CircuitBreaker<T> {
   private state: CircuitState = { failures: 0, cooldownUntil: 0 };
   private cache: CacheEntry<T> | null = null;
@@ -187,7 +181,7 @@ export class CircuitBreaker<T> {
     fn: () => Promise<R>,
     defaultValue: R
   ): Promise<R> {
-    const offline = isDesktopOfflineMode();
+    const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
 
     // Hydrate from persistent storage on first call (~1-5ms IndexedDB read)
     if (this.persistEnabled && !this.persistentLoaded) {

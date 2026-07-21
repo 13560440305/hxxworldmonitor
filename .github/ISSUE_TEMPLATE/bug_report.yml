@@ -16,9 +16,6 @@ body:
         - worldmonitor.app (Full / Geopolitical)
         - tech.worldmonitor.app (Tech / Startup)
         - finance.worldmonitor.app (Finance)
-        - Desktop app (Windows)
-        - Desktop app (macOS)
-        - Desktop app (Linux)
     validations:
       required: true
 
@@ -36,7 +33,6 @@ body:
         - Trending Keywords
         - Country Brief pages
         - Live video streams
-        - Desktop app (Tauri)
         - Settings / API keys
         - Settings / LLMs (Ollama, Groq, OpenRouter)
         - Live webcams

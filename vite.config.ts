@@ -12,7 +12,6 @@ import { loadEnvLocal } from './packages/shared/src/load-env.ts';
 loadEnvLocal();
 
 const isE2E = process.env.VITE_E2E === '1';
-const isDesktopBuild = process.env.VITE_DESKTOP_RUNTIME === '1';
 
 function getPlatformApiProxyTarget(): string | null {
   const env = loadEnv(
@@ -234,20 +233,6 @@ function htmlVariantPlugin(): Plugin {
         );
       }
 
-      // Desktop CSP: inject localhost wildcard for dynamic sidecar port.
-      // Web builds intentionally exclude localhost to avoid exposing attack surface.
-      if (isDesktopBuild) {
-        result = result
-          .replace(
-            /connect-src 'self' https: http:\/\/localhost:5173/,
-            "connect-src 'self' https: http://localhost:5173 http://127.0.0.1:*"
-          )
-          .replace(
-            /frame-src 'self'/,
-            "frame-src 'self' http://127.0.0.1:*"
-          );
-      }
-
       // Favicon variant paths — replace /favico/ paths with variant-specific subdirectory
       if (activeVariant !== 'full') {
         result = result
@@ -315,13 +300,18 @@ function polymarketPlugin(): Plugin {
  * Intercepts requests matching /api/{domain}/v1/* and routes them through
  * the same handler pipeline as the Vercel catch-all gateway. Other /api/*
  * paths fall through to existing proxy rules.
+ *
+ * Load handlers via ssrLoadModule at request time (not static import()).
+ * Static imports would be bundled into vite.config; bare @hxxworldmonitor/*
+ * deps then load under Node and fail on `.js` → `.ts` resolution.
  */
 function sebufApiPlugin(): Plugin {
   // Cache router across requests (H-13 fix). Invalidated by Vite's module graph on HMR.
-  let cachedRouter: Awaited<ReturnType<typeof buildRouter>> | null = null;
+  let cachedRouter: { match: (req: Request) => ((req: Request) => Promise<Response>) | null } | null = null;
   let cachedCorsMod: any = null;
 
-  async function buildRouter() {
+  async function buildRouter(server: { ssrLoadModule: (url: string) => Promise<any> }) {
+    const load = (id: string) => server.ssrLoadModule(id);
     const [
       routerMod, corsMod, errorMod,
       seismologyServerMod, seismologyHandlerMod,
@@ -346,51 +336,51 @@ function sebufApiPlugin(): Plugin {
       tradeServerMod, tradeHandlerMod,
       supplyChainServerMod, supplyChainHandlerMod,
     ] = await Promise.all([
-        import('./server/router'),
-        import('./server/cors'),
-        import('./server/error-mapper'),
-        import('./src/generated/server/worldmonitor/seismology/v1/service_server'),
-        import('./server/worldmonitor/seismology/v1/handler'),
-        import('./src/generated/server/worldmonitor/wildfire/v1/service_server'),
-        import('./server/worldmonitor/wildfire/v1/handler'),
-        import('./src/generated/server/worldmonitor/climate/v1/service_server'),
-        import('./server/worldmonitor/climate/v1/handler'),
-        import('./src/generated/server/worldmonitor/prediction/v1/service_server'),
-        import('./server/worldmonitor/prediction/v1/handler'),
-        import('./src/generated/server/worldmonitor/displacement/v1/service_server'),
-        import('./server/worldmonitor/displacement/v1/handler'),
-        import('./src/generated/server/worldmonitor/aviation/v1/service_server'),
-        import('./server/worldmonitor/aviation/v1/handler'),
-        import('./src/generated/server/worldmonitor/research/v1/service_server'),
-        import('./server/worldmonitor/research/v1/handler'),
-        import('./src/generated/server/worldmonitor/unrest/v1/service_server'),
-        import('./server/worldmonitor/unrest/v1/handler'),
-        import('./src/generated/server/worldmonitor/conflict/v1/service_server'),
-        import('./server/worldmonitor/conflict/v1/handler'),
-        import('./src/generated/server/worldmonitor/maritime/v1/service_server'),
-        import('./server/worldmonitor/maritime/v1/handler'),
-        import('./src/generated/server/worldmonitor/cyber/v1/service_server'),
-        import('./server/worldmonitor/cyber/v1/handler'),
-        import('./src/generated/server/worldmonitor/economic/v1/service_server'),
-        import('./server/worldmonitor/economic/v1/handler'),
-        import('./src/generated/server/worldmonitor/infrastructure/v1/service_server'),
-        import('./server/worldmonitor/infrastructure/v1/handler'),
-        import('./src/generated/server/worldmonitor/market/v1/service_server'),
-        import('./server/worldmonitor/market/v1/handler'),
-        import('./src/generated/server/worldmonitor/news/v1/service_server'),
-        import('./server/worldmonitor/news/v1/handler'),
-        import('./src/generated/server/worldmonitor/intelligence/v1/service_server'),
-        import('./server/worldmonitor/intelligence/v1/handler'),
-        import('./src/generated/server/worldmonitor/military/v1/service_server'),
-        import('./server/worldmonitor/military/v1/handler'),
-        import('./src/generated/server/worldmonitor/positive_events/v1/service_server'),
-        import('./server/worldmonitor/positive-events/v1/handler'),
-        import('./src/generated/server/worldmonitor/giving/v1/service_server'),
-        import('./server/worldmonitor/giving/v1/handler'),
-        import('./src/generated/server/worldmonitor/trade/v1/service_server'),
-        import('./server/worldmonitor/trade/v1/handler'),
-        import('./src/generated/server/worldmonitor/supply_chain/v1/service_server'),
-        import('./server/worldmonitor/supply-chain/v1/handler'),
+        load('/server/router.ts'),
+        load('/server/cors.ts'),
+        load('/server/error-mapper.ts'),
+        load('/src/generated/server/worldmonitor/seismology/v1/service_server.ts'),
+        load('/server/worldmonitor/seismology/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/wildfire/v1/service_server.ts'),
+        load('/server/worldmonitor/wildfire/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/climate/v1/service_server.ts'),
+        load('/server/worldmonitor/climate/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/prediction/v1/service_server.ts'),
+        load('/server/worldmonitor/prediction/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/displacement/v1/service_server.ts'),
+        load('/server/worldmonitor/displacement/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/aviation/v1/service_server.ts'),
+        load('/server/worldmonitor/aviation/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/research/v1/service_server.ts'),
+        load('/server/worldmonitor/research/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/unrest/v1/service_server.ts'),
+        load('/server/worldmonitor/unrest/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/conflict/v1/service_server.ts'),
+        load('/server/worldmonitor/conflict/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/maritime/v1/service_server.ts'),
+        load('/server/worldmonitor/maritime/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/cyber/v1/service_server.ts'),
+        load('/server/worldmonitor/cyber/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/economic/v1/service_server.ts'),
+        load('/server/worldmonitor/economic/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/infrastructure/v1/service_server.ts'),
+        load('/server/worldmonitor/infrastructure/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/market/v1/service_server.ts'),
+        load('/server/worldmonitor/market/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/news/v1/service_server.ts'),
+        load('/server/worldmonitor/news/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/intelligence/v1/service_server.ts'),
+        load('/server/worldmonitor/intelligence/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/military/v1/service_server.ts'),
+        load('/server/worldmonitor/military/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/positive_events/v1/service_server.ts'),
+        load('/server/worldmonitor/positive-events/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/giving/v1/service_server.ts'),
+        load('/server/worldmonitor/giving/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/trade/v1/service_server.ts'),
+        load('/server/worldmonitor/trade/v1/handler.ts'),
+        load('/src/generated/server/worldmonitor/supply_chain/v1/service_server.ts'),
+        load('/server/worldmonitor/supply-chain/v1/handler.ts'),
       ]);
 
     const serverOptions = { onError: errorMod.mapErrorToResponse };
@@ -426,7 +416,8 @@ function sebufApiPlugin(): Plugin {
     configureServer(server) {
       // Invalidate cached router on HMR updates to server/ files
       server.watcher.on('change', (file) => {
-        if (file.includes('/server/') || file.includes('/src/generated/server/')) {
+        const normalized = file.replace(/\\/g, '/');
+        if (normalized.includes('/server/') || normalized.includes('/src/generated/server/')) {
           cachedRouter = null;
         }
       });
@@ -440,7 +431,7 @@ function sebufApiPlugin(): Plugin {
         try {
           // Build router once, reuse across requests (H-13 fix)
           if (!cachedRouter) {
-            cachedRouter = await buildRouter();
+            cachedRouter = await buildRouter(server);
           }
           const router = cachedRouter;
           const corsMod = cachedCorsMod;
@@ -882,8 +873,6 @@ export default defineConfig({
       },
       input: {
         main: resolve(__dirname, 'index.html'),
-        settings: resolve(__dirname, 'settings.html'),
-        liveChannels: resolve(__dirname, 'live-channels.html'),
         admin: resolve(__dirname, 'admin.html'),
       },
       output: {

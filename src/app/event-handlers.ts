@@ -42,7 +42,6 @@ import {
   trackPanelToggled,
   trackLanguageChange,
 } from '@/services/analytics';
-import { invokeTauri } from '@/services/tauri-bridge';
 import { dataFreshness } from '@/services/data-freshness';
 import { mlWorker } from '@/services/ml-worker';
 import { UnifiedSettings } from '@/components/UnifiedSettings';
@@ -295,9 +294,7 @@ export class EventHandlerManager implements AppModule {
           if (url.origin === window.location.origin) return;
           e.preventDefault();
           e.stopPropagation();
-          void invokeTauri<void>('open_url', { url: url.toString() }).catch(() => {
-            window.open(url.toString(), '_blank');
-          });
+          window.open(url.toString(), '_blank', 'noopener,noreferrer');
         } catch { /* malformed URL -- let browser handle */ }
       };
       document.addEventListener('click', this.boundDesktopExternalLinkHandler, true);
